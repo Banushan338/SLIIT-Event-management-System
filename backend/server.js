@@ -1,4 +1,6 @@
+const path = require('path');
 const express = require('express');
+const http = require('http');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const dotenv = require('dotenv');
@@ -7,22 +9,32 @@ const authRoutes = require('./routes/auth.routes');
 const adminRoutes = require('./routes/admin.routes');
 const eventRoutes = require('./routes/event.routes');
 const facultyRoutes = require('./routes/faculty.routes');
-const { seedIfEmpty } = require('./seeds/seedIfEmpty');
+const userRoutes = require('./routes/user.routes');
+const notificationRoutes = require('./routes/notification.routes');
+const feedbackRoutes = require('./routes/feedback.routes');
 const {
   authenticate,
   requireAdmin,
   requireFacultyCoordinator,
 } = require('./middleware/auth.middleware');
+const { initSocket } = require('./utils/socket');
 
 dotenv.config();
 
 const app = express();
+const server = http.createServer(app);
 
 app.use(cors());
 app.use(express.json());
 app.use(requestLogger);
 
+/** Profile images and other local uploads */
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
 app.use('/api/auth', authRoutes);
+app.use('/api/users', authenticate, userRoutes);
+app.use('/api/notifications', authenticate, notificationRoutes);
+app.use('/api/feedback', feedbackRoutes);
 app.use('/api/admin', authenticate, requireAdmin, adminRoutes);
 app.use('/api/events', authenticate, eventRoutes);
 app.use(
@@ -38,15 +50,8 @@ const MONGODB_URI =
 
 mongoose
   .connect(MONGODB_URI)
-  .then(async () => {
+  .then(() => {
     logger.info('Connected to MongoDB');
-    try {
-      if (process.env.SEED_ON_EMPTY_DB !== 'false') {
-        await seedIfEmpty();
-      }
-    } catch (e) {
-      logger.error('Seed-if-empty failed', { message: e?.message });
-    }
   })
   .catch((err) => {
     logger.error('Error connecting to MongoDB', { message: err.message });
@@ -57,7 +62,9 @@ app.get('/', (req, res) => {
   res.json({ message: 'Event Management backend is running' });
 });
 
-app.listen(PORT, () => {
+initSocket(server);
+
+server.listen(PORT, () => {
   logger.info(`Server is running on port ${PORT}`);
 });
 

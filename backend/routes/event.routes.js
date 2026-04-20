@@ -13,6 +13,11 @@ const {
   registerForEvent,
   getStudentRegistrations,
 } = require('../controllers/event.controller');
+const {
+  getStudentPastFeedbackItems,
+  submitFeedback,
+  listOrganizerFeedbacks,
+} = require('../controllers/eventFeedback.controller');
 
 const router = express.Router();
 
@@ -20,6 +25,7 @@ const router = express.Router();
 router.post('/', createEvent);
 router.get('/overview', getOrganizerOverview);
 router.get('/mine', listMyEvents);
+router.get('/mine/feedbacks', listOrganizerFeedbacks);
 router.get('/approved', listApprovedEvents);
 router.put('/:id', updateMyEvent);
 router.post('/:id/checkin', checkInQr);
@@ -27,6 +33,8 @@ router.post('/:id/register', registerForEvent);
 
 // Student endpoints
 router.get('/student/registrations', getStudentRegistrations);
+router.get('/student/past-feedback', getStudentPastFeedbackItems);
+router.post('/:id/feedback', submitFeedback);
 
 // Faculty coordinator endpoints
 router.get('/pending', listPendingEvents);
