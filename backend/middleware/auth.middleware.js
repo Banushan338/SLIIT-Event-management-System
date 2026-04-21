@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const { logger } = require('../utils/logger');
 const { User } = require('../models/user.model');
+const { normalizeRole } = require('../utils/rbac');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-jwt-secret';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '1h';
@@ -71,17 +72,42 @@ const issueJwt = (req, res) => {
 
   logger.info('JWTs issued for user', { email: user.email, role: user.role });
 
-  return res.status(200).json({
-    message: 'Login successful',
+  const status = typeof req.authHttpStatus === 'number' ? req.authHttpStatus : 200;
+  const successMessage = req.authSuccessMessage || 'Login successful';
+
+  return res.status(status).json({
+    message: successMessage,
     user: {
       id: user.id,
       name: user.name,
       email: user.email,
       role: user.role,
+      profileImage: user.profileImage ?? '',
     },
     token: accessToken,
     refreshToken,
   });
+};
+
+/** Issue access + refresh JWTs for a persisted user (e.g. OAuth). */
+const createTokenPairForUser = (user) => {
+  const id = user._id != null ? user._id.toString() : String(user.id);
+  const payload = {
+    sub: id,
+    email: user.email,
+    role: user.role,
+  };
+  const accessToken = jwt.sign(payload, JWT_SECRET, {
+    expiresIn: JWT_EXPIRES_IN,
+  });
+  const refreshToken = jwt.sign(
+    { sub: id, tokenType: 'refresh' },
+    REFRESH_TOKEN_SECRET,
+    {
+      expiresIn: REFRESH_TOKEN_EXPIRES_IN,
+    },
+  );
+  return { accessToken, refreshToken };
 };
 
 const authenticate = (req, res, next) => {
@@ -170,8 +196,9 @@ const refreshAccessToken = (req, res) => {
 
 const requireAdmin = (req, res, next) => {
   const user = req.user;
+  const role = normalizeRole(user?.role);
 
-  if (!user || user.role !== 'admin') {
+  if (!user || !['admin', 'superAdmin'].includes(role)) {
     logger.warn('Non-admin user attempted to access admin-only route', {
       userId: user?.id,
       role: user?.role,
@@ -184,8 +211,9 @@ const requireAdmin = (req, res, next) => {
 
 const requireFacultyCoordinator = (req, res, next) => {
   const user = req.user;
+  const role = normalizeRole(user?.role);
 
-  if (!user || user.role !== 'facultyCoordinator') {
+  if (!user || role !== 'facultyCoordinator') {
     logger.warn('Non-facultyCoordinator attempted to access coordinator route', {
       userId: user?.id,
       role: user?.role,
@@ -193,6 +221,40 @@ const requireFacultyCoordinator = (req, res, next) => {
     return res.status(403).json({ message: 'Faculty coordinator access required' });
   }
 
+  return next();
+};
+
+const requireStudent = (req, res, next) => {
+  const role = normalizeRole(req.user?.role);
+  if (!req.user || role !== 'student') {
+    return res.status(403).json({ message: 'Student access required' });
+  }
+  return next();
+};
+
+/** Browse / shared student-area endpoints (e.g. staff with limited access). */
+const requireStudentOrStaff = (req, res, next) => {
+  const role = normalizeRole(req.user?.role);
+  if (!req.user || !['student', 'staff'].includes(role)) {
+    return res.status(403).json({ message: 'Student or staff access required' });
+  }
+  return next();
+};
+
+const requireOrganizer = (req, res, next) => {
+  const role = normalizeRole(req.user?.role);
+  if (!req.user || role !== 'organizer') {
+    return res.status(403).json({ message: 'Organizer access required' });
+  }
+  return next();
+};
+
+/** Admin or organizer (feedback analytics / management). */
+const requireOrganizerOrAdmin = (req, res, next) => {
+  const role = normalizeRole(req.user?.role);
+  if (!req.user || !['admin', 'organizer', 'superAdmin'].includes(role)) {
+    return res.status(403).json({ message: 'Organizer or admin access required' });
+  }
   return next();
 };
 
@@ -219,9 +281,14 @@ const logout = (req, res) => {
 
 module.exports = {
   issueJwt,
+  createTokenPairForUser,
   authenticate,
   requireAdmin,
   requireFacultyCoordinator,
+  requireStudent,
+  requireStudentOrStaff,
+  requireOrganizer,
+  requireOrganizerOrAdmin,
   refreshAccessToken,
   logout,
 };

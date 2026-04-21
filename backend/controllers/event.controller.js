@@ -1,10 +1,52 @@
+const mongoose = require('mongoose');
 const { Event, EVENT_TYPES } = require('../models/event.model');
 const { Attendance } = require('../models/attendance.model');
 const { Registration } = require('../models/registration.model');
 const { logger } = require('../utils/logger');
+const eventService = require('../services/event.service');
+const { normalizeRole } = require('../utils/rbac');
+
+/** Local calendar YYYY-MM-DD for a Date (matches browser date inputs). */
+function formatLocalYmd(input) {
+  const d = input instanceof Date ? input : new Date(input);
+  if (Number.isNaN(d.getTime())) return null;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Validates that combined date + time is not in the past.
+ * `dateInput` may be YYYY-MM-DD string or a Date.
+ */
+function validateEventStartNotInPast(dateInput, timeStr) {
+  const t = String(timeStr || '').trim();
+  if (!t) {
+    return { ok: false, message: 'time is required' };
+  }
+  let ymd =
+    typeof dateInput === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateInput.trim())
+      ? dateInput.trim()
+      : formatLocalYmd(dateInput);
+  if (!ymd) {
+    return { ok: false, message: 'Invalid date' };
+  }
+  const start = new Date(`${ymd}T${t}`);
+  if (Number.isNaN(start.getTime())) {
+    return { ok: false, message: 'Invalid date or time' };
+  }
+  if (start.getTime() < Date.now()) {
+    return {
+      ok: false,
+      message: 'Event date and time must be today or later, and not in the past.',
+    };
+  }
+  return { ok: true };
+}
 
 const requireOrganizer = (req, res) => {
-  const role = req.user?.role;
+  const role = normalizeRole(req.user?.role);
   if (role !== 'organizer') {
     return res.status(403).json({ message: 'Organizer access required' });
   }
@@ -12,7 +54,7 @@ const requireOrganizer = (req, res) => {
 };
 
 const requireFacultyCoordinator = (req, res) => {
-  const role = req.user?.role;
+  const role = normalizeRole(req.user?.role);
   if (role !== 'facultyCoordinator') {
     return res
       .status(403)
@@ -21,10 +63,28 @@ const requireFacultyCoordinator = (req, res) => {
   return null;
 };
 
+const requireApprover = (req, res) => {
+  const role = normalizeRole(req.user?.role);
+  if (!['admin', 'superAdmin', 'facultyCoordinator'].includes(role)) {
+    return res
+      .status(403)
+      .json({ message: 'Admin or faculty coordinator access required' });
+  }
+  return null;
+};
+
 const requireStudent = (req, res) => {
-  const role = req.user?.role;
+  const role = normalizeRole(req.user?.role);
   if (role !== 'student') {
     return res.status(403).json({ message: 'Student access required' });
+  }
+  return null;
+};
+
+const requireStudentOrStaff = (req, res) => {
+  const role = normalizeRole(req.user?.role);
+  if (!['student', 'staff'].includes(role)) {
+    return res.status(403).json({ message: 'Student or staff access required' });
   }
   return null;
 };
@@ -70,6 +130,11 @@ const createEvent = async (req, res) => {
       return res.status(400).json({ message: 'Invalid date' });
     }
 
+    const startCheck = validateEventStartNotInPast(String(date).trim(), time);
+    if (!startCheck.ok) {
+      return res.status(400).json({ message: startCheck.message });
+    }
+
     const created = await Event.create({
       name: String(name).trim(),
       description: String(description).trim(),
@@ -86,6 +151,7 @@ const createEvent = async (req, res) => {
       eventId: created._id.toString(),
       createdBy: req.user.id,
     });
+    await eventService.notifyPendingApproval(created);
 
     return res.status(201).json({
       message: 'Event created successfully',
@@ -156,6 +222,7 @@ const listMyEvents = async (req, res) => {
         scannedCount: scansByEventId.get(String(e._id)) || 0,
         thumbnailUrl: e.thumbnailUrl,
         status: e.status,
+        resubmission: e.resubmission || {},
         createdAt: e.createdAt,
       })),
     });
@@ -233,7 +300,45 @@ const updateMyEvent = async (req, res) => {
       event.status = status;
     }
 
+    const requestedReapproval = Boolean(req.body?.requestReapproval);
+    const changedByOrganizer = ['name', 'description', 'type', 'date', 'time', 'place', 'totalSeats', 'thumbnailUrl']
+      .some((k) => req.body?.[k] !== undefined);
+    const previousStatus = event.status;
+
+    if (changedByOrganizer && previousStatus === 'approved') {
+      if (!requestedReapproval) {
+        return res.status(400).json({
+          message: 'Editing an approved event requires requestReapproval=true for admin re-check.',
+        });
+      }
+      event.status = 'pending';
+      event.resubmission = {
+        ...(event.resubmission || {}),
+        requestedReapproval: true,
+        resubmittedAt: new Date(),
+      };
+      event.decision = { decidedBy: null, decidedAt: null, rejectionReason: '' };
+    }
+
+    if (changedByOrganizer && previousStatus === 'rejected') {
+      event.status = 'pending';
+      event.resubmission = {
+        ...(event.resubmission || {}),
+        wasRejectedBefore: true,
+        previousRejectionReason: event.decision?.rejectionReason || '',
+        requestedReapproval: true,
+        resubmittedAt: new Date(),
+      };
+      event.decision = { decidedBy: null, decidedAt: null, rejectionReason: '' };
+    }
+
     await event.save();
+    if (previousStatus === 'approved' && event.status === 'approved') {
+      await eventService.notifyEventUpdated(event);
+    }
+    if (event.status === 'pending' && changedByOrganizer && ['approved', 'rejected'].includes(previousStatus)) {
+      await eventService.notifyPendingApproval(event, { resubmitted: true });
+    }
 
     return res.status(200).json({
       message: 'Event updated successfully',
@@ -248,6 +353,7 @@ const updateMyEvent = async (req, res) => {
         totalSeats: event.totalSeats,
         thumbnailUrl: event.thumbnailUrl,
         status: event.status,
+        resubmission: event.resubmission || {},
         createdAt: event.createdAt,
         updatedAt: event.updatedAt,
       },
@@ -305,7 +411,7 @@ const checkInQr = async (req, res) => {
 
 const listPendingEvents = async (req, res) => {
   try {
-    const deny = requireFacultyCoordinator(req, res);
+    const deny = requireApprover(req, res);
     if (deny) return;
 
     const items = await Event.find({ status: 'pending' })
@@ -325,6 +431,7 @@ const listPendingEvents = async (req, res) => {
         totalSeats: e.totalSeats,
         thumbnailUrl: e.thumbnailUrl,
         status: e.status,
+        resubmission: e.resubmission || {},
         createdAt: e.createdAt,
         createdBy: e.createdBy
           ? {
@@ -344,7 +451,7 @@ const listPendingEvents = async (req, res) => {
 
 const listAllEventsForFaculty = async (req, res) => {
   try {
-    const deny = requireFacultyCoordinator(req, res);
+    const deny = requireApprover(req, res);
     if (deny) return;
 
     const items = await Event.find({})
@@ -406,6 +513,7 @@ const listApprovedEvents = async (req, res) => {
         totalSeats: e.totalSeats,
         thumbnailUrl: e.thumbnailUrl,
         status: e.status,
+        resubmission: e.resubmission || {},
         createdAt: e.createdAt,
       })),
     });
@@ -423,6 +531,9 @@ const registerForEvent = async (req, res) => {
     const eventId = req.params?.id;
     if (!eventId) {
       return res.status(400).json({ message: 'Event id is required' });
+    }
+    if (!mongoose.Types.ObjectId.isValid(eventId)) {
+      return res.status(400).json({ message: 'Invalid event id' });
     }
 
     const event = await Event.findById(eventId).lean();
@@ -492,7 +603,7 @@ const registerForEvent = async (req, res) => {
 
 const approveEvent = async (req, res) => {
   try {
-    const deny = requireFacultyCoordinator(req, res);
+    const deny = requireApprover(req, res);
     if (deny) return;
 
     const eventId = req.params?.id;
@@ -500,6 +611,8 @@ const approveEvent = async (req, res) => {
 
     const event = await Event.findById(eventId);
     if (!event) return res.status(404).json({ message: 'Event not found' });
+    const authz = await eventService.ensureRoleCanApprove(req.user.id, req.user.role, event);
+    if (!authz.ok) return res.status(authz.status).json({ message: authz.message });
 
     if (event.status !== 'pending') {
       return res.status(409).json({
@@ -515,6 +628,7 @@ const approveEvent = async (req, res) => {
     };
 
     await event.save();
+    await eventService.notifyApproved(event);
 
     return res.status(200).json({
       message: 'Event approved',
@@ -538,16 +652,18 @@ const approveEvent = async (req, res) => {
 
 const rejectEvent = async (req, res) => {
   try {
-    const deny = requireFacultyCoordinator(req, res);
+    const deny = requireApprover(req, res);
     if (deny) return;
 
     const eventId = req.params?.id;
     if (!eventId) return res.status(400).json({ message: 'Event id is required' });
 
-    const reason = String(req.body?.reason || '').trim();
+    const reason = String(req.body?.rejectionReason || req.body?.reason || '').trim();
 
     const event = await Event.findById(eventId);
     if (!event) return res.status(404).json({ message: 'Event not found' });
+    const authz = await eventService.ensureRoleCanApprove(req.user.id, req.user.role, event);
+    if (!authz.ok) return res.status(authz.status).json({ message: authz.message });
 
     if (event.status !== 'pending') {
       return res.status(409).json({
@@ -563,6 +679,7 @@ const rejectEvent = async (req, res) => {
     };
 
     await event.save();
+    await eventService.notifyRejected(event, reason);
 
     return res.status(200).json({
       message: 'Event rejected',
@@ -672,7 +789,7 @@ const getOrganizerOverview = async (req, res) => {
 
 const getStudentRegistrations = async (req, res) => {
   try {
-    const deny = requireStudent(req, res);
+    const deny = requireStudentOrStaff(req, res);
     if (deny) return;
 
     const regs = await Registration.find({ userId: req.user.id })
