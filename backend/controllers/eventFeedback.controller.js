@@ -1,6 +1,6 @@
 const { Event } = require('../models/event.model');
 const { Registration } = require('../models/registration.model');
-const { EventFeedback } = require('../models/eventFeedback.model');
+const { Feedback } = require('../models/feedback.model');
 const feedbackService = require('../services/feedback.service');
 const { logger } = require('../utils/logger');
 
@@ -52,7 +52,7 @@ const getStudentPastFeedbackItems = async (req, res) => {
       if (!ev) continue;
       if (!isEventPast(ev)) continue;
 
-      const fb = await EventFeedback.findOne({
+      const fb = await Feedback.findOne({
         eventId: ev._id,
         userId: req.user.id,
       }).lean();
@@ -72,8 +72,10 @@ const getStudentPastFeedbackItems = async (req, res) => {
         feedback: fb
           ? {
               id: fb._id.toString(),
+              category: fb.category,
               rating: fb.rating,
-              comment: fb.comment ?? '',
+              message: fb.message ?? '',
+              comment: fb.message ?? '',
               createdAt: fb.createdAt,
               updatedAt: fb.updatedAt,
             }
@@ -102,24 +104,26 @@ const submitFeedback = async (req, res) => {
     if (deny) return;
 
     const eventId = req.params?.id;
-    const { rating, comment = '' } = req.body || {};
+    const { rating = null, category = 'Other', message = '' } = req.body || {};
 
     const created = await feedbackService.submitFeedback({
       userId: req.user.id,
       userEmail: req.user.email,
       eventId,
+      category,
+      message,
       rating,
-      comment,
     });
 
     return res.status(201).json({
       message: 'Feedback submitted',
       feedback: {
         id: created.id,
+        category: created.category,
         rating: created.rating,
-        comment: created.comment,
+        message: created.message,
+        comment: created.message,
         createdAt: created.createdAt,
-        updatedAt: created.updatedAt,
       },
     });
   } catch (error) {
@@ -148,7 +152,7 @@ const listOrganizerFeedbacks = async (req, res) => {
       return res.status(200).json({ feedbacks: [] });
     }
 
-    const rows = await EventFeedback.find({ eventId: { $in: eventIds } })
+    const rows = await Feedback.find({ eventId: { $in: eventIds } })
       .populate('userId', 'name email')
       .sort({ createdAt: -1 })
       .lean();
@@ -157,8 +161,10 @@ const listOrganizerFeedbacks = async (req, res) => {
       id: row._id.toString(),
       eventId: row.eventId.toString(),
       eventName: nameById.get(row.eventId.toString()) ?? 'Event',
+      category: row.category,
       rating: row.rating,
-      comment: row.comment ?? '',
+      message: row.message ?? '',
+      comment: row.message ?? '',
       createdAt: row.createdAt,
       student: row.userId
         ? {
