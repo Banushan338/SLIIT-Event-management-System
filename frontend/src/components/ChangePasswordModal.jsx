@@ -1,22 +1,31 @@
 import { useMemo, useState } from 'react'
-import axios from 'axios'
-import { X } from 'lucide-react'
+import { KeyRound, Loader2 } from 'lucide-react'
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { api, extractErrorMessage } from '@/lib/api'
 
-export function ChangePasswordModal({ open, onClose }) {
+export function ChangePasswordModal({ open = true, onClose }) {
   const [oldPassword, setOldPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
-  const [status, setStatus] = useState('idle') // idle | saving
+  const [status, setStatus] = useState('idle')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
   const canSubmit = useMemo(() => {
     if (status === 'saving') return false
-    if (!oldPassword || !newPassword || !confirmPassword) return false
-    return true
+    return Boolean(oldPassword && newPassword && confirmPassword)
   }, [confirmPassword, newPassword, oldPassword, status])
 
   const close = () => {
@@ -33,7 +42,6 @@ export function ChangePasswordModal({ open, onClose }) {
     e.preventDefault()
     setError('')
     setSuccess('')
-
     if (!oldPassword || !newPassword || !confirmPassword) {
       setError('Please fill all fields.')
       return
@@ -42,122 +50,106 @@ export function ChangePasswordModal({ open, onClose }) {
       setError('New password and confirm password do not match.')
       return
     }
-
-    const accessToken = localStorage.getItem('accessToken')
-    if (!accessToken) {
-      setError('You are not logged in.')
-      return
-    }
-
     setStatus('saving')
     try {
-      await axios.put(
-        `${API_BASE_URL}/api/auth/change-password`,
-        { oldPassword, newPassword, confirmPassword },
-        { headers: { Authorization: `Bearer ${accessToken}` } },
-      )
+      await api.put('/api/auth/change-password', {
+        oldPassword,
+        newPassword,
+        confirmPassword,
+      })
       setSuccess('Password updated successfully.')
       setOldPassword('')
       setNewPassword('')
       setConfirmPassword('')
     } catch (err) {
-      setError(err?.response?.data?.message || 'Unable to update password.')
+      setError(extractErrorMessage(err, 'Unable to update password.'))
     } finally {
       setStatus('idle')
     }
   }
 
-  if (!open) return null
-
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-3xl shadow-2xl border border-black/5 w-full max-w-lg p-6 md:p-8 relative">
-        <button
-          type="button"
-          onClick={close}
-          className="absolute top-4 right-4 p-2 rounded-full hover:bg-slate-100 text-slate-500 disabled:opacity-60"
-          aria-label="Close change password dialog"
-          disabled={status === 'saving'}
-        >
-          <X size={18} />
-        </button>
-
-        <h2 className="text-2xl font-bold text-slate-900">Change password</h2>
-        <p className="text-sm text-slate-500 mt-1">
-          Enter your current password and choose a new one.
-        </p>
-
-        <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-          {error && (
-            <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
-              {error}
+    <Dialog open={open} onOpenChange={(o) => !o && close()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-xl bg-brand-gradient shadow-glow">
+              <KeyRound className="h-4 w-4 text-white" />
             </div>
+            <div>
+              <DialogTitle className="text-xl">Change password</DialogTitle>
+              <DialogDescription>
+                Enter your current password and choose a new one.
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {error && (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
           )}
           {success && (
-            <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-              {success}
-            </div>
+            <Alert variant="success">
+              <AlertDescription>{success}</AlertDescription>
+            </Alert>
           )}
 
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-slate-600">
-              Old password
-            </label>
-            <input
+          <div className="space-y-2">
+            <Label htmlFor="old-password">Current password</Label>
+            <Input
+              id="old-password"
               type="password"
               value={oldPassword}
               onChange={(e) => setOldPassword(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl border border-black/5 bg-slate-50 text-sm outline-none focus:ring-2 focus:ring-indigo-500/40"
               autoComplete="current-password"
             />
           </div>
-
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-slate-600">
-              New password
-            </label>
-            <input
+          <div className="space-y-2">
+            <Label htmlFor="new-password">New password</Label>
+            <Input
+              id="new-password"
               type="password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl border border-black/5 bg-slate-50 text-sm outline-none focus:ring-2 focus:ring-indigo-500/40"
               autoComplete="new-password"
             />
           </div>
-
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-slate-600">
-              Confirm password
-            </label>
-            <input
+          <div className="space-y-2">
+            <Label htmlFor="confirm-password">Confirm new password</Label>
+            <Input
+              id="confirm-password"
               type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl border border-black/5 bg-slate-50 text-sm outline-none focus:ring-2 focus:ring-indigo-500/40"
               autoComplete="new-password"
             />
           </div>
 
-          <div className="pt-2 flex items-center justify-end gap-3">
-            <button
+          <DialogFooter className="pt-2">
+            <Button
               type="button"
+              variant="outline"
               onClick={close}
-              className="px-4 py-2.5 rounded-2xl border border-slate-200 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
               disabled={status === 'saving'}
             >
               Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={!canSubmit}
-              className="px-5 py-2.5 rounded-2xl bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 shadow-md shadow-indigo-100 disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              {status === 'saving' ? 'Updating…' : 'Update password'}
-            </button>
-          </div>
+            </Button>
+            <Button type="submit" variant="gradient" disabled={!canSubmit}>
+              {status === 'saving' ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Updating…
+                </>
+              ) : (
+                'Update password'
+              )}
+            </Button>
+          </DialogFooter>
         </form>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }
-
