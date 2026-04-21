@@ -104,6 +104,10 @@ const login = async (req, res, next) => {
 
     return next();
   } catch (error) {
+    if (error.statusCode) {
+      logger.warn('Blocked login attempt', { email: req.body?.email, message: error.message });
+      return res.status(error.statusCode).json({ message: error.message });
+    }
     logger.error('Error during login', { message: error.message });
     return res.status(500).json({ message: 'Internal server error' });
   }

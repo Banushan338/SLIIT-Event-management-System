@@ -12,6 +12,8 @@ const facultyRoutes = require('./routes/faculty.routes');
 const userRoutes = require('./routes/user.routes');
 const notificationRoutes = require('./routes/notification.routes');
 const feedbackRoutes = require('./routes/feedback.routes');
+const reviewRoutes = require('./routes/review.routes');
+const commentRoutes = require('./routes/comment.routes');
 const {
   authenticate,
   requireAdmin,
@@ -35,6 +37,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', authenticate, userRoutes);
 app.use('/api/notifications', authenticate, notificationRoutes);
 app.use('/api/feedback', feedbackRoutes);
+app.use('/api/reviews', authenticate, reviewRoutes);
+app.use('/api/comments', authenticate, commentRoutes);
 app.use('/api/admin', authenticate, requireAdmin, adminRoutes);
 app.use('/api/events', authenticate, eventRoutes);
 app.use(

@@ -3,6 +3,7 @@ const { User, USER_ROLES } = require('../models/user.model');
 const { EventFeedback } = require('../models/eventFeedback.model');
 const { AuditLog } = require('../models/auditLog.model');
 const notificationService = require('../services/notification.service');
+const { sendMail } = require('../services/email.service');
 const { logger } = require('../utils/logger');
 const {
   canAssignRole,
@@ -148,7 +149,7 @@ const listUsers = async (req, res) => {
     const users = await User.find(filter)
       .sort({ createdAt: -1 })
       .select(
-        'name email role status department phone registrationNumber profileImage createdAt updatedAt lastLoginAt emailVerified roleProfile notificationPreferences',
+        'name email role status department phone registrationNumber staffId address bio profileImage createdAt updatedAt lastLoginAt emailVerified roleProfile notificationPreferences',
       )
       .lean();
 
@@ -238,6 +239,29 @@ const updateUserByAdmin = async (req, res) => {
       if (next !== (target.staffId || '')) {
         changes.staffId = { from: target.staffId || '', to: next };
         target.staffId = next;
+      }
+    }
+    if (typeof body.bio === 'string') {
+      const next = body.bio.trim();
+      if (next !== (target.bio || '')) {
+        changes.bio = { from: target.bio || '', to: next };
+        target.bio = next;
+      }
+    }
+    if (body.address && typeof body.address === 'object') {
+      const nextAddress = {
+        line1: String(body.address.line1 || '').trim(),
+        city: String(body.address.city || '').trim(),
+        district: String(body.address.district || '').trim(),
+      };
+      const prevAddress = target.address || {};
+      if (
+        nextAddress.line1 !== String(prevAddress.line1 || '') ||
+        nextAddress.city !== String(prevAddress.city || '') ||
+        nextAddress.district !== String(prevAddress.district || '')
+      ) {
+        changes.address = { from: prevAddress, to: nextAddress };
+        target.address = nextAddress;
       }
     }
 
@@ -415,6 +439,15 @@ const deleteUserByAdmin = async (req, res) => {
       action: 'DELETE_USER',
       changes: { deleted: true, snapshot: toPublicUser(target) },
       ip: req.ip || '',
+    });
+
+    sendMail({
+      to: target.email,
+      subject: 'Account deleted - SLIIT Events',
+      text: `Hello ${target.name || 'User'},\n\nYour account has been permanently deleted by an administrator.\n\nIf you think this is a mistake, please contact support.`,
+      html: `<p>Hello ${target.name || 'User'},</p><p>Your account has been <strong>permanently deleted</strong> by an administrator.</p><p>If you think this is a mistake, please contact support.</p>`,
+    }).catch((e) => {
+      logger.warn('Delete account email failed', { message: e.message, email: target.email });
     });
 
     return res.status(200).json({ message: 'User deleted' });
