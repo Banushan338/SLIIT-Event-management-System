@@ -8,15 +8,39 @@ const { uploadProfileImage: uploadMw } = require('../middleware/upload.middlewar
 const router = express.Router();
 
 router.get('/profile', authenticate, userController.getProfile);
+router.get('/me', authenticate, userController.getProfile);
 
 router.put(
   '/profile',
   authenticate,
   body('name').optional().isString().trim().notEmpty(),
+  body('email').optional().isEmail(),
   body('phone').optional().isString().trim(),
+  body('address').optional().isObject(),
+  body('address.line1').optional().isString().trim(),
+  body('address.city').optional().isString().trim(),
+  body('address.district').optional().isString().trim(),
   body('department').optional().isString().trim(),
   body('registrationNumber').optional().isString().trim(),
-  body('password').optional().isString().isLength({ min: 6 }),
+  body('bio').optional().isString().isLength({ max: 500 }),
+  body('roleProfile').optional().isObject(),
+  validateRequest,
+  userController.updateProfile,
+);
+
+router.put(
+  '/me',
+  authenticate,
+  body('name').optional().isString().trim().notEmpty(),
+  body('email').optional().isEmail(),
+  body('phone').optional().isString().trim(),
+  body('address').optional().isObject(),
+  body('address.line1').optional().isString().trim(),
+  body('address.city').optional().isString().trim(),
+  body('address.district').optional().isString().trim(),
+  body('department').optional().isString().trim(),
+  body('registrationNumber').optional().isString().trim(),
+  body('bio').optional().isString().isLength({ max: 500 }),
   body('roleProfile').optional().isObject(),
   validateRequest,
   userController.updateProfile,

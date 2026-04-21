@@ -14,6 +14,8 @@ router.patch(
   body('inApp').optional().isBoolean(),
   body('eventNotifications').optional().isBoolean(),
   body('approvalNotifications').optional().isBoolean(),
+  body('commentNotifications').optional().isBoolean(),
+  body('moderationNotifications').optional().isBoolean(),
   validateRequest,
   notificationController.patchPreferences,
 );
