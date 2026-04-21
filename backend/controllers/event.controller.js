@@ -89,6 +89,306 @@ const requireStudentOrStaff = (req, res) => {
   return null;
 };
 
+function combineDateAndTime(dateInput, timeInput) {
+  if (!dateInput || !timeInput) return null;
+  const dateObj = dateInput instanceof Date ? dateInput : new Date(dateInput);
+  if (Number.isNaN(dateObj.getTime())) return null;
+  const hhmm = String(timeInput).trim();
+  const match = /^(\d{1,2}):(\d{2})$/.exec(hhmm);
+  if (!match) return null;
+  const next = new Date(dateObj);
+  next.setHours(Number(match[1]), Number(match[2]), 0, 0);
+  return Number.isNaN(next.getTime()) ? null : next;
+}
+
+function deriveLifecycleStatus(event, now = new Date()) {
+  const current = String(event?.status || '').toLowerCase();
+  if (current === 'cancelled') return 'cancelled';
+  const start = event?.startTime ? new Date(event.startTime) : combineDateAndTime(event?.date, event?.time);
+  const end = event?.endTime ? new Date(event.endTime) : null;
+  if (!start || Number.isNaN(start.getTime())) return current || 'upcoming';
+  if (end && Number.isNaN(end.getTime())) return current || 'upcoming';
+  if (now < start) return 'upcoming';
+  if (end && now >= start && now <= end) return 'ongoing';
+  if (!end && now >= start) return 'ongoing';
+  return 'completed';
+}
+
+function resolveDurationMinutes(start, end, fallback = 60) {
+  if (!start || !end) return fallback;
+  const minutes = Math.round((end.getTime() - start.getTime()) / 60000);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes : fallback;
+}
+
+function resolveEndFromDuration(start, durationMinutes) {
+  const mins = Number.parseInt(durationMinutes, 10);
+  if (!start || !Number.isFinite(mins) || mins < 1) return null;
+  return new Date(start.getTime() + mins * 60000);
+}
+
+function getSortBucket(status) {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'upcoming') return 0;
+  if (normalized === 'ongoing') return 1;
+  return 2;
+}
+
+function canManageEvent(user, eventDoc) {
+  const role = normalizeRole(user?.role);
+  if (['admin', 'superAdmin'].includes(role)) return true;
+  if (role !== 'organizer') return false;
+  const ownerId = eventDoc?.organizerId || eventDoc?.createdBy;
+  return String(ownerId || '') === String(user?.id || '');
+}
+
+function eventToLifecycleDto(event) {
+  const id = event?._id || event?.id || null;
+  const startTime = event.startTime || combineDateAndTime(event.date, event.time);
+  const resolvedEndTime = event.endTime || null;
+  const durationMinutes = resolveDurationMinutes(
+    startTime ? new Date(startTime) : null,
+    resolvedEndTime ? new Date(resolvedEndTime) : null,
+    Number.isFinite(event.durationMinutes) ? event.durationMinutes : 60,
+  );
+  const computedStatus = deriveLifecycleStatus({ ...event, startTime, endTime: event.endTime, status: event.status });
+  const organizerObj = event.organizerId || event.createdBy;
+  return {
+    id: id ? String(id) : '',
+    title: event.title || event.name,
+    name: event.name || event.title,
+    description: event.description || '',
+    organizerId: organizerObj?._id ? String(organizerObj._id) : (event.organizerId || event.createdBy)?.toString?.() || null,
+    organizer: organizerObj?._id
+      ? {
+          id: String(organizerObj._id),
+          name: organizerObj.name,
+          email: organizerObj.email,
+          role: organizerObj.role,
+        }
+      : null,
+    startTime,
+    endTime: resolvedEndTime,
+    durationMinutes,
+    location: event.location || event.place || '',
+    status: computedStatus,
+    finishedAt: computedStatus === 'completed' ? resolvedEndTime : null,
+    cancellationReason: event.cancellationReason || '',
+    createdAt: event.createdAt,
+    updatedAt: event.updatedAt,
+  };
+}
+
+const createLifecycleEvent = async (req, res) => {
+  try {
+    if (!['organizer', 'admin', 'superAdmin'].includes(normalizeRole(req.user?.role))) {
+      return res.status(403).json({ message: 'Organizer or admin access required' });
+    }
+    const body = req.body || {};
+    const rawTitle = body.title || body.name;
+    const parsedStart = body.startTime
+      ? new Date(body.startTime)
+      : combineDateAndTime(body.date, body.time);
+    const parsedEnd = body.endTime
+      ? new Date(body.endTime)
+      : resolveEndFromDuration(parsedStart, body.durationMinutes) || (parsedStart ? new Date(parsedStart.getTime() + 60 * 60 * 1000) : null);
+    const resolvedLocation = body.location || body.place;
+    if (!rawTitle || !parsedStart || !parsedEnd || !resolvedLocation) {
+      return res.status(400).json({ message: 'title/name, startTime/date+time, endTime and location/place are required' });
+    }
+    if (Number.isNaN(parsedStart.getTime()) || Number.isNaN(parsedEnd.getTime())) {
+      return res.status(400).json({ message: 'Invalid startTime or endTime' });
+    }
+    if (parsedEnd <= parsedStart) {
+      return res.status(400).json({ message: 'endTime must be after startTime' });
+    }
+    const base = {
+      title: String(rawTitle).trim(),
+      name: String(rawTitle).trim(),
+      description: String(body.description || '').trim(),
+      startTime: parsedStart,
+      endTime: parsedEnd,
+      durationMinutes: resolveDurationMinutes(parsedStart, parsedEnd, Number.parseInt(body.durationMinutes, 10) || 60),
+      location: String(resolvedLocation).trim(),
+      place: String(resolvedLocation).trim(),
+      date: parsedStart,
+      time: `${String(parsedStart.getHours()).padStart(2, '0')}:${String(parsedStart.getMinutes()).padStart(2, '0')}`,
+      organizerId: req.user.id,
+      createdBy: req.user.id,
+      type: body?.type && EVENT_TYPES.includes(body.type) ? body.type : 'work',
+      totalSeats: Number.parseInt(body?.totalSeats, 10) > 0 ? Number.parseInt(body.totalSeats, 10) : 100,
+    };
+    const status = deriveLifecycleStatus({ ...base, status: 'upcoming' });
+    const created = await Event.create({ ...base, status });
+    return res.status(201).json({ event: eventToLifecycleDto(created.toObject()) });
+  } catch (error) {
+    logger.error('Error creating lifecycle event', { message: error.message });
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+const listLifecycleEvents = async (req, res) => {
+  try {
+    const role = normalizeRole(req.user?.role);
+    if (!['organizer', 'admin', 'superAdmin', 'facultyCoordinator'].includes(role)) {
+      return res.status(403).json({ message: 'Insufficient permissions' });
+    }
+    const { status, organizerId, q, datePreset, startDate, endDate } = req.query || {};
+    const query = {};
+    if (organizerId) query.organizerId = organizerId;
+    if (q) query.$or = [{ title: { $regex: String(q), $options: 'i' } }, { name: { $regex: String(q), $options: 'i' } }];
+    const now = new Date();
+    if (datePreset === 'today') {
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(now);
+      end.setHours(23, 59, 59, 999);
+      query.startTime = { $gte: start, $lte: end };
+    } else if (datePreset === 'week') {
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(now);
+      end.setDate(now.getDate() + 7);
+      end.setHours(23, 59, 59, 999);
+      query.startTime = { $gte: start, $lte: end };
+    } else if (startDate || endDate) {
+      query.startTime = {};
+      if (startDate) query.startTime.$gte = new Date(startDate);
+      if (endDate) query.startTime.$lte = new Date(endDate);
+    }
+    const docs = await Event.find(query)
+      .populate('organizerId', 'name email role')
+      .populate('createdBy', 'name email role')
+      .lean();
+    const mapped = docs
+      .map((e) => {
+        const nextStatus = deriveLifecycleStatus(e);
+        return { ...eventToLifecycleDto(e), status: nextStatus };
+      })
+      .filter((e) => (!status ? true : e.status === String(status).toLowerCase()))
+      .sort((a, b) => {
+        const bucketA = getSortBucket(a.status);
+        const bucketB = getSortBucket(b.status);
+        if (bucketA !== bucketB) return bucketA - bucketB;
+        const tA = new Date(a.startTime || 0).getTime();
+        const tB = new Date(b.startTime || 0).getTime();
+        return tA - tB;
+      });
+    return res.status(200).json({ events: mapped });
+  } catch (error) {
+    logger.error('Error listing lifecycle events', { message: error.message });
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+const getLifecycleEvent = async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid event id' });
+    }
+    const event = await Event.findById(req.params.id)
+      .populate('organizerId', 'name email role')
+      .populate('createdBy', 'name email role')
+      .lean();
+    if (!event) return res.status(404).json({ message: 'Event not found' });
+    return res.status(200).json({ event: eventToLifecycleDto(event) });
+  } catch (error) {
+    logger.error('Error getting lifecycle event', { message: error.message });
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+const updateLifecycleEvent = async (req, res) => {
+  try {
+    const event = await Event.findById(req.params.id);
+    if (!event) return res.status(404).json({ message: 'Event not found' });
+    if (!canManageEvent(req.user, event)) {
+      return res.status(403).json({ message: 'You can only edit your own events' });
+    }
+    const body = req.body || {};
+    const nextTitle =
+      body?.title !== undefined
+        ? String(body.title).trim()
+        : (body?.name !== undefined ? String(body.name).trim() : (event.title || event.name));
+    const nextDescription =
+      req.body?.description !== undefined ? String(req.body.description).trim() : event.description;
+    const nextLocation =
+      body?.location !== undefined
+        ? String(body.location).trim()
+        : (body?.place !== undefined ? String(body.place).trim() : (event.location || event.place));
+    const nextStart = body?.startTime
+      ? new Date(body.startTime)
+      : (body?.date || body?.time
+          ? combineDateAndTime(body.date || event.date, body.time || event.time)
+          : (event.startTime || combineDateAndTime(event.date, event.time)));
+    const nextEnd = body?.endTime
+      ? new Date(body.endTime)
+      : (resolveEndFromDuration(nextStart, body?.durationMinutes)
+          || event.endTime
+          || (nextStart ? new Date(nextStart.getTime() + 60 * 60 * 1000) : null));
+    if (!nextTitle || !nextStart || Number.isNaN(nextStart.getTime()) || !nextEnd || Number.isNaN(nextEnd.getTime()) || nextEnd <= nextStart || !nextLocation) {
+      return res.status(400).json({ message: 'Invalid title/location/startTime/endTime payload' });
+    }
+    event.title = nextTitle;
+    event.name = nextTitle;
+    event.description = nextDescription;
+    event.location = nextLocation;
+    event.place = nextLocation;
+    event.startTime = nextStart;
+    event.endTime = nextEnd;
+    event.durationMinutes = resolveDurationMinutes(nextStart, nextEnd, Number.parseInt(body?.durationMinutes, 10) || event.durationMinutes || 60);
+    event.date = nextStart;
+    event.time = `${String(nextStart.getHours()).padStart(2, '0')}:${String(nextStart.getMinutes()).padStart(2, '0')}`;
+    event.status = deriveLifecycleStatus(event);
+    await event.save();
+    const populated = await Event.findById(event._id)
+      .populate('organizerId', 'name email role')
+      .populate('createdBy', 'name email role')
+      .lean();
+    return res.status(200).json({ event: eventToLifecycleDto(populated) });
+  } catch (error) {
+    logger.error('Error updating lifecycle event', { message: error.message });
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+const cancelLifecycleEvent = async (req, res) => {
+  try {
+    const reason = String(req.body?.reason || '').trim();
+    if (!reason) return res.status(400).json({ message: 'Cancellation reason is required' });
+    const event = await Event.findById(req.params.id);
+    if (!event) return res.status(404).json({ message: 'Event not found' });
+    if (!canManageEvent(req.user, event)) {
+      return res.status(403).json({ message: 'You can only cancel your own events' });
+    }
+    event.status = 'cancelled';
+    event.cancellationReason = reason;
+    await event.save();
+    const populated = await Event.findById(event._id)
+      .populate('organizerId', 'name email role')
+      .populate('createdBy', 'name email role')
+      .lean();
+    return res.status(200).json({ event: eventToLifecycleDto(populated) });
+  } catch (error) {
+    logger.error('Error cancelling lifecycle event', { message: error.message });
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+const deleteLifecycleEvent = async (req, res) => {
+  try {
+    const role = normalizeRole(req.user?.role);
+    if (!['admin', 'superAdmin'].includes(role)) {
+      return res.status(403).json({ message: 'Admin access required' });
+    }
+    const deleted = await Event.findByIdAndDelete(req.params.id);
+    if (!deleted) return res.status(404).json({ message: 'Event not found' });
+    return res.status(200).json({ message: 'Event deleted' });
+  } catch (error) {
+    logger.error('Error deleting lifecycle event', { message: error.message });
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
 const createEvent = async (req, res) => {
   try {
     const deny = requireOrganizer(req, res);
@@ -821,6 +1121,12 @@ const getStudentRegistrations = async (req, res) => {
 };
 
 module.exports = {
+  createLifecycleEvent,
+  listLifecycleEvents,
+  getLifecycleEvent,
+  updateLifecycleEvent,
+  cancelLifecycleEvent,
+  deleteLifecycleEvent,
   createEvent,
   listMyEvents,
   listPendingEvents,
