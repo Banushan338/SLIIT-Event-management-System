@@ -66,6 +66,44 @@ app.get('/', (req, res) => {
   res.json({ message: 'Event Management backend is running' });
 });
 
+// Centralized error handler to avoid opaque 500s for validation/upload issues.
+app.use((err, req, res, _next) => {
+  if (!err) {
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+
+  if (err.name === 'MulterError') {
+    logger.warn('Upload middleware error', {
+      code: err.code,
+      message: err.message,
+      url: req.originalUrl || req.url,
+    });
+    return res.status(400).json({ message: err.message || 'Invalid upload payload' });
+  }
+
+  if (
+    typeof err.message === 'string' &&
+    err.message.toLowerCase().includes('only jpeg, png, gif, or webp images are allowed')
+  ) {
+    logger.warn('Upload file type rejected', {
+      message: err.message,
+      url: req.originalUrl || req.url,
+    });
+    return res.status(400).json({ message: err.message });
+  }
+
+  logger.error('Unhandled API error', {
+    message: err.message,
+    stack: err.stack,
+    url: req.originalUrl || req.url,
+    method: req.method,
+  });
+  return res.status(500).json({
+    message: 'Internal server error',
+    error: process.env.NODE_ENV === 'production' ? undefined : err.message,
+  });
+});
+
 initSocket(server);
 
 server.listen(PORT, () => {
