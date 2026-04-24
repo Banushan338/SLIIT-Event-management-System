@@ -14,6 +14,7 @@ const ROLE_ALIAS = {
   ORGANIZER: 'organizer',
   FACULTY_COORDINATOR: 'facultyCoordinator',
   FACULTYCOORDINATOR: 'facultyCoordinator',
+  FACULTY: 'facultyCoordinator',
   STAFF: 'staff',
   STUDENT: 'student',
 };

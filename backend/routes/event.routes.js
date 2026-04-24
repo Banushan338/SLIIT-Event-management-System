@@ -17,6 +17,7 @@ const {
   registerForEvent,
   getStudentRegistrations,
 } = require('../controllers/event.controller');
+const { uploadEventImages } = require('../middleware/upload.middleware');
 const {
   getStudentPastFeedbackItems,
   submitFeedback,
@@ -25,15 +26,32 @@ const {
 
 const router = express.Router();
 
+const uploadEventImagesSafe = (req, res, next) => {
+  uploadEventImages.array('images', 3)(req, res, (err) => {
+    if (!err) return next();
+    return res.status(400).json({
+      message: err.message || 'Invalid event image upload payload',
+    });
+  });
+};
+
 // Organizer event endpoints
+<<<<<<< HEAD
 router.post('/', createLifecycleEvent);
+=======
+router.post('/', uploadEventImagesSafe, createLifecycleEvent);
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
 router.get('/', listLifecycleEvents);
 router.get('/overview', getOrganizerOverview);
 router.get('/mine', listMyEvents);
 router.get('/mine/feedbacks', listOrganizerFeedbacks);
 router.get('/approved', listApprovedEvents);
 router.get('/:id', getLifecycleEvent);
+<<<<<<< HEAD
 router.put('/:id', updateLifecycleEvent);
+=======
+router.put('/:id', uploadEventImagesSafe, updateLifecycleEvent);
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
 router.patch('/:id/cancel', cancelLifecycleEvent);
 router.delete('/:id', deleteLifecycleEvent);
 router.post('/:id/checkin', checkInQr);

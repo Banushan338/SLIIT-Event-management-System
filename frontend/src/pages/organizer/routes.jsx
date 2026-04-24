@@ -1,5 +1,9 @@
 import {
   Activity,
+<<<<<<< HEAD
+=======
+  ImagePlus,
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
   Bell,
   CalendarDays,
   CheckCircle2,
@@ -208,7 +212,43 @@ function useOrganizerData() {
   const saveEvent = async (payload, existingEvent) => {
     const method = existingEvent ? 'put' : 'post'
     const url = existingEvent ? `/api/events/${existingEvent.id}` : '/api/events'
+<<<<<<< HEAD
     const res = await api[method](url, payload)
+=======
+    const hasNewImages = Array.isArray(payload.imageFiles) && payload.imageFiles.length > 0
+    const hasExistingImages = Array.isArray(payload.existingImages) && payload.existingImages.length > 0
+
+    let res
+    if (hasNewImages || hasExistingImages) {
+      const formData = new FormData()
+      formData.append('name', payload.name || '')
+      formData.append('description', payload.description || '')
+      formData.append('type', payload.type || 'work')
+      formData.append('date', payload.date || '')
+      formData.append('time', payload.time || '')
+      formData.append('place', payload.place || '')
+      formData.append('totalSeats', String(payload.totalSeats || 0))
+      formData.append('requestReapproval', payload.requestReapproval ? 'true' : 'false')
+      formData.append('existingImageUrls', JSON.stringify(payload.existingImages || []))
+      for (const file of payload.imageFiles || []) {
+        formData.append('images', file)
+      }
+      res = await api[method](url, formData)
+    } else {
+      // Fallback to JSON request when no images selected.
+      // This keeps event create/edit working even if backend isn't restarted yet.
+      res = await api[method](url, {
+        name: payload.name || '',
+        description: payload.description || '',
+        type: payload.type || 'work',
+        date: payload.date || '',
+        time: payload.time || '',
+        place: payload.place || '',
+        totalSeats: Number(payload.totalSeats || 0),
+        requestReapproval: Boolean(payload.requestReapproval),
+      })
+    }
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
     const event = res.data?.event
     if (event) {
       setEvents((prev) =>
@@ -229,6 +269,10 @@ function useOrganizerData() {
 }
 
 function EventDialog({ open, onOpenChange, initialEvent, onSubmit }) {
+<<<<<<< HEAD
+=======
+  const today = new Date().toISOString().slice(0, 10)
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
   const [form, setForm] = useState({
     name: '',
     description: '',
@@ -237,7 +281,12 @@ function EventDialog({ open, onOpenChange, initialEvent, onSubmit }) {
     time: '',
     place: '',
     totalSeats: '',
+<<<<<<< HEAD
     thumbnailUrl: '',
+=======
+    imageFiles: [],
+    existingImages: [],
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
     requestReapproval: false,
   })
   const [saving, setSaving] = useState(false)
@@ -252,19 +301,50 @@ function EventDialog({ open, onOpenChange, initialEvent, onSubmit }) {
       time: initialEvent?.time ?? '',
       place: initialEvent?.place ?? '',
       totalSeats: initialEvent?.totalSeats ? String(initialEvent.totalSeats) : '',
+<<<<<<< HEAD
       thumbnailUrl: initialEvent?.thumbnailUrl ?? '',
+=======
+      imageFiles: [],
+      existingImages: Array.isArray(initialEvent?.images)
+        ? initialEvent.images
+        : (initialEvent?.thumbnailUrl ? [initialEvent.thumbnailUrl] : []),
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
       requestReapproval: false,
     })
   }, [initialEvent, open])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+<<<<<<< HEAD
+=======
+    if (!form.place) {
+      toast({
+        title: 'Venue is required',
+        description: 'Please select a venue.',
+        variant: 'destructive',
+      })
+      return
+    }
+    if (!initialEvent && form.date && form.date < today) {
+      toast({
+        title: 'Invalid date',
+        description: 'Please select today or a future date.',
+        variant: 'destructive',
+      })
+      return
+    }
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
     setSaving(true)
     try {
       await onSubmit({
         ...form,
         totalSeats: Number(form.totalSeats || 0),
         date: form.date || undefined,
+<<<<<<< HEAD
+=======
+        imageFiles: form.imageFiles || [],
+        existingImages: form.existingImages || [],
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
       })
       onOpenChange(false)
     } finally {
@@ -302,7 +382,11 @@ function EventDialog({ open, onOpenChange, initialEvent, onSubmit }) {
             <div className="grid gap-2">
               <Label>Category</Label>
               <Select value={form.type} onValueChange={(v) => setForm((p) => ({ ...p, type: v }))}>
+<<<<<<< HEAD
                 <SelectTrigger>
+=======
+                <SelectTrigger className="h-11">
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -319,6 +403,10 @@ function EventDialog({ open, onOpenChange, initialEvent, onSubmit }) {
                 id="event-seats"
                 type="number"
                 min="1"
+<<<<<<< HEAD
+=======
+                className="h-11"
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
                 value={form.totalSeats}
                 onChange={(ev) => setForm((p) => ({ ...p, totalSeats: ev.target.value }))}
                 required
@@ -347,6 +435,11 @@ function EventDialog({ open, onOpenChange, initialEvent, onSubmit }) {
               <Input
                 id="event-date"
                 type="date"
+<<<<<<< HEAD
+=======
+                min={today}
+                className="h-11"
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
                 value={form.date}
                 onChange={(ev) => setForm((p) => ({ ...p, date: ev.target.value }))}
                 required
@@ -357,12 +450,17 @@ function EventDialog({ open, onOpenChange, initialEvent, onSubmit }) {
               <Input
                 id="event-time"
                 type="time"
+<<<<<<< HEAD
+=======
+                className="h-11"
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
                 value={form.time}
                 onChange={(ev) => setForm((p) => ({ ...p, time: ev.target.value }))}
                 required
               />
             </div>
           </div>
+<<<<<<< HEAD
           <div className="grid gap-4 md:grid-cols-2">
             <div className="grid gap-2">
               <Label htmlFor="event-place">Venue</Label>
@@ -380,6 +478,52 @@ function EventDialog({ open, onOpenChange, initialEvent, onSubmit }) {
                 value={form.thumbnailUrl}
                 onChange={(ev) => setForm((p) => ({ ...p, thumbnailUrl: ev.target.value }))}
               />
+=======
+          <div className="grid gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="event-place">Venue</Label>
+              <Select value={form.place} onValueChange={(v) => setForm((p) => ({ ...p, place: v }))}>
+                <SelectTrigger id="event-place" className="h-11">
+                  <SelectValue placeholder="Select venue" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="201">201</SelectItem>
+                  <SelectItem value="301">301</SelectItem>
+                  <SelectItem value="501">501</SelectItem>
+                  <SelectItem value="Main hall">Main hall</SelectItem>
+                  <SelectItem value="Auditorium">Auditorium</SelectItem>
+                  <SelectItem value="Main ground">Main ground</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="event-images">Event images (up to 3)</Label>
+              <Input
+                id="event-images"
+                type="file"
+                accept="image/*"
+                multiple
+                className="h-11"
+                onChange={(ev) => {
+                  const files = Array.from(ev.target.files || []).slice(0, 3)
+                  setForm((p) => ({ ...p, imageFiles: files }))
+                }}
+              />
+              <p className="text-xs text-[var(--color-muted-foreground)]">
+                Upload up to 3 images. First image will be used as cover.
+              </p>
+              {(form.imageFiles?.length || form.existingImages?.length) ? (
+                <div className="rounded-lg border border-[var(--color-border)] p-2 text-xs text-[var(--color-muted-foreground)]">
+                  <p className="mb-1 font-medium text-[var(--color-foreground)] inline-flex items-center gap-1">
+                    <ImagePlus className="h-3.5 w-3.5" />
+                    Selected images
+                  </p>
+                  {(form.imageFiles?.length ? form.imageFiles.map((f) => f.name) : form.existingImages.slice(0, 3)).map((name, idx) => (
+                    <p key={`${name}-${idx}`}>{idx + 1}. {name}</p>
+                  ))}
+                </div>
+              ) : null}
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
             </div>
           </div>
           <DialogFooter>
