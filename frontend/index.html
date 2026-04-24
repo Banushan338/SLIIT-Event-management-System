@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0B1120" />
+    <title>SLIIT EVENTS</title>
+    <script>
+      // Apply persisted theme before paint to avoid flash.
+      (function () {
+        try {
+          var saved = localStorage.getItem('sliit-theme');
+          var root = document.documentElement;
+          if (saved === 'light') {
+            root.classList.remove('dark');
+            root.classList.add('light');
+          } else {
+            root.classList.add('dark');
+            root.classList.remove('light');
+          }
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
