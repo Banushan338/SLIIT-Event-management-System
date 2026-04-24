@@ -1,8 +1,12 @@
 const express = require('express');
 const {
-  createEvent,
+  createLifecycleEvent,
+  listLifecycleEvents,
+  getLifecycleEvent,
+  updateLifecycleEvent,
+  cancelLifecycleEvent,
+  deleteLifecycleEvent,
   listMyEvents,
-  updateMyEvent,
   listPendingEvents,
   listAllEventsForFaculty,
   listApprovedEvents,
@@ -22,12 +26,16 @@ const {
 const router = express.Router();
 
 // Organizer event endpoints
-router.post('/', createEvent);
+router.post('/', createLifecycleEvent);
+router.get('/', listLifecycleEvents);
 router.get('/overview', getOrganizerOverview);
 router.get('/mine', listMyEvents);
 router.get('/mine/feedbacks', listOrganizerFeedbacks);
 router.get('/approved', listApprovedEvents);
-router.put('/:id', updateMyEvent);
+router.get('/:id', getLifecycleEvent);
+router.put('/:id', updateLifecycleEvent);
+router.patch('/:id/cancel', cancelLifecycleEvent);
+router.delete('/:id', deleteLifecycleEvent);
 router.post('/:id/checkin', checkInQr);
 router.post('/:id/register', registerForEvent);
 
