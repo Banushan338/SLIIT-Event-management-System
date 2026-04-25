@@ -52,9 +52,7 @@ const listRecycledEvents = async (req, res) => {
         name: e.name,
         deletedAt: e.deletedAt,
         status: e.status,
-        createdBy: e.createdBy
-          ? { name: e.createdBy.name, email: e.createdBy.email }
-          : null,
+        createdBy: e.createdBy ? { name: e.createdBy.name, email: e.createdBy.email } : null,
       })),
     });
   } catch (error) {
@@ -121,9 +119,7 @@ function buildSimulationPayload(body) {
     peakBusySlots: expectedCrowdFlow
       .filter((x) => x.relativeIntensity >= 0.65)
       .map((x) => x.timeLabel),
-    peakTimeSlot: peak
-      ? `${peak.timeLabel} (≈ ${peak.estPresent} people)`
-      : 'n/a',
+    peakTimeSlot: peak ? `${peak.timeLabel} (≈ ${peak.estPresent} people)` : 'n/a',
     estimatedResourceUsage: {
       seatCapacity: totalSeats,
       expectedAttendance: expected,
@@ -167,9 +163,7 @@ const getResourceInsights = async (req, res) => {
     const noShow = Math.max(0, regCount - scanCount);
     const wasteScore = Math.min(
       100,
-      Math.round(
-        (unusedSeats / Math.max(1, seats)) * 40 + (regCount > 0 ? (noShow / regCount) * 60 : 0),
-      ),
+      Math.round((unusedSeats / Math.max(1, seats)) * 40 + (regCount > 0 ? (noShow / regCount) * 60 : 0)),
     );
     const efficiency =
       seats <= 0
@@ -203,6 +197,71 @@ const getResourceInsights = async (req, res) => {
   }
 };
 
+const getResourceAnalytics = async (req, res) => {
+  try {
+    if (requireAdminOrSuper(req, res)) return;
+    const events = await Event.find({ ...EVENT_ACTIVE }).select('name totalSeats').sort({ createdAt: -1 }).lean();
+    const capped = events.slice(0, 40);
+    const ids = capped.map((e) => e._id);
+    const [regAgg, scanAgg] = await Promise.all([
+      Registration.aggregate([
+        { $match: { eventId: { $in: ids } } },
+        { $group: { _id: '$eventId', count: { $sum: 1 } } },
+      ]),
+      Attendance.aggregate([
+        { $match: { eventId: { $in: ids } } },
+        { $group: { _id: '$eventId', count: { $sum: 1 } } },
+      ]),
+    ]);
+
+    const regsById = new Map(regAgg.map((x) => [String(x._id), x.count]));
+    const scansById = new Map(scanAgg.map((x) => [String(x._id), x.count]));
+    const byEvent = capped.map((e) => {
+      const eventId = String(e._id);
+      const totalSeats = Math.max(0, Number(e.totalSeats || 0));
+      const registrations = Math.max(0, Number(regsById.get(eventId) || 0));
+      const checkInScans = Math.max(0, Number(scansById.get(eventId) || 0));
+      const unusedSeats = Math.max(0, totalSeats - registrations);
+      const wastedCapacityPct = totalSeats > 0 ? Math.round((unusedSeats / totalSeats) * 100) : 0;
+      const utilizationEfficiencyScore =
+        totalSeats <= 0
+          ? 0
+          : Math.max(
+              0,
+              Math.min(
+                100,
+                Math.round(
+                  (Math.min(totalSeats, registrations) / totalSeats) * 70 +
+                    (Math.min(registrations, checkInScans) / Math.max(1, registrations)) * 30,
+                ),
+              ),
+            );
+      return {
+        eventId,
+        eventName: e.name,
+        totalSeats,
+        registrations,
+        checkInScans,
+        unusedSeats,
+        wastedCapacityPct,
+        utilizationEfficiencyScore,
+      };
+    });
+
+    return res.status(200).json({
+      byEvent,
+      totals: {
+        totalSeats: byEvent.reduce((sum, x) => sum + x.totalSeats, 0),
+        registrations: byEvent.reduce((sum, x) => sum + x.registrations, 0),
+        unusedSeats: byEvent.reduce((sum, x) => sum + x.unusedSeats, 0),
+      },
+    });
+  } catch (error) {
+    logger.error('getResourceAnalytics', { message: error.message });
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
 const getEventStoryPdf = async (req, res) => {
   try {
     const eventId = req.params?.id;
@@ -226,11 +285,38 @@ const getEventStoryPdf = async (req, res) => {
       return res.status(400).json({ message: 'Event story is available after the event has completed' });
     }
 
-    const [regCount, feedbackRows] = await Promise.all([
+    const [regCount, scanCount, feedbackRows] = await Promise.all([
       Registration.countDocuments({ eventId: event._id }),
+      Attendance.countDocuments({ eventId: event._id }),
       Feedback.find({ eventId: event._id }).populate('userId', 'name email').sort({ createdAt: -1 }).lean(),
     ]);
     const summary = await feedbackService.getEventFeedbackSummary(event._id);
+    const seats = Math.max(0, Number(event.totalSeats || 0));
+    const unusedSeats = Math.max(0, seats - regCount);
+    const wastedCapacityPct = seats > 0 ? Math.round((unusedSeats / seats) * 100) : 0;
+    const attendanceRatePct = regCount > 0 ? Math.round((Math.min(regCount, scanCount) / regCount) * 100) : 0;
+    const utilizationEfficiencyScore =
+      seats <= 0
+        ? 0
+        : Math.max(
+            0,
+            Math.min(
+              100,
+              Math.round(
+                (Math.min(seats, regCount) / seats) * 70 +
+                  (Math.min(regCount, scanCount) / Math.max(1, regCount)) * 30,
+              ),
+            ),
+          );
+    const avgRating = summary.averageRating != null ? Number(summary.averageRating).toFixed(2) : 'n/a';
+    const eventStory = [
+      `${event.name} concluded with ${scanCount} attended participants from ${regCount} registrations.`,
+      seats > 0
+        ? `Capacity planning used ${seats} total seats, with ${unusedSeats} unused seats (${wastedCapacityPct}% wasted capacity).`
+        : 'No published seat capacity was configured for this event.',
+      `Attendance conversion reached ${attendanceRatePct}% and overall utilization efficiency scored ${utilizationEfficiencyScore}/100.`,
+      `Participants submitted ${summary.count} feedback entries with an average rating of ${avgRating}.`,
+    ].join(' ');
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="event-story-${String(eventId)}.pdf"`);
@@ -244,7 +330,7 @@ const getEventStoryPdf = async (req, res) => {
     const startT = event.startTime || combineDateAndTime(event.date, event.time);
     doc.text(`Start: ${startT ? new Date(startT).toISOString() : '—'}`);
     doc.text(`Location: ${event.location || event.place || '—'}`);
-    doc.text(`Seats: ${event.totalSeats} • Registrations: ${regCount}`);
+    doc.text(`Seats: ${event.totalSeats} • Registrations: ${regCount} • Attendance scans: ${scanCount}`);
     doc.moveDown();
     doc.fontSize(12).text('Description', { underline: true });
     doc.fontSize(10).text(String(event.description || '—').slice(0, 4000));
@@ -257,6 +343,19 @@ const getEventStoryPdf = async (req, res) => {
           summary.averageRating != null ? summary.averageRating : 'n/a'
         }`,
       );
+    doc.text(`Attendance rate: ${attendanceRatePct}%`);
+    doc.moveDown();
+    doc.fontSize(12).text('Resource tracking', { underline: true });
+    doc
+      .fontSize(10)
+      .text(
+        `Unused seats: ${unusedSeats} • Wasted capacity: ${wastedCapacityPct}% • Utilization efficiency: ${utilizationEfficiencyScore}/100`,
+      );
+    doc.moveDown();
+    doc.fontSize(12).text('Event story', { underline: true });
+    doc.fontSize(10).text(eventStory);
+    doc.moveDown();
+    doc.fontSize(12).text('Feedback summary', { underline: true });
     for (const f of feedbackRows.slice(0, 30)) {
       const who = f.userId?.name || f.userId?.email || 'Student';
       doc.text(`- ${who}: ${String(f.message || '').slice(0, 500)}`);
@@ -277,4 +376,5 @@ module.exports = {
   getResourceInsights,
   getEventStoryPdf,
   buildSimulationPayload,
+  getResourceAnalytics,
 };

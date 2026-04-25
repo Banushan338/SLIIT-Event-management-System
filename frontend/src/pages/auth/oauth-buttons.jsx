@@ -12,23 +12,12 @@ function GoogleIcon({ className = 'h-4 w-4' }) {
   )
 }
 
-function MicrosoftIcon({ className = 'h-4 w-4' }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" aria-hidden>
-      <rect x="2" y="2" width="9" height="9" fill="#F25022" />
-      <rect x="13" y="2" width="9" height="9" fill="#7FBA00" />
-      <rect x="2" y="13" width="9" height="9" fill="#00A4EF" />
-      <rect x="13" y="13" width="9" height="9" fill="#FFB900" />
-    </svg>
-  )
-}
-
 export function OAuthButtons({ disabled }) {
   const startOAuth = (provider) => {
     window.location.href = `${API_BASE_URL}/api/auth/oauth/${provider}/start`
   }
   return (
-    <div className="grid grid-cols-2 gap-3">
+    <div className="grid grid-cols-1 gap-3">
       <Button
         type="button"
         variant="glass"
@@ -38,16 +27,6 @@ export function OAuthButtons({ disabled }) {
       >
         <GoogleIcon />
         Google
-      </Button>
-      <Button
-        type="button"
-        variant="glass"
-        className="h-11 rounded-xl gap-2"
-        onClick={() => startOAuth('microsoft')}
-        disabled={disabled}
-      >
-        <MicrosoftIcon />
-        Microsoft
       </Button>
     </div>
   )

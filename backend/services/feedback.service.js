@@ -2,9 +2,11 @@
  * Shared feedback business logic (REST + legacy event routes).
  */
 const { Event } = require('../models/event.model');
+const { EVENT_ACTIVE } = require('../utils/eventQueries');
 const { Registration } = require('../models/registration.model');
 const { Attendance } = require('../models/attendance.model');
 const { Feedback } = require('../models/feedback.model');
+const notificationService = require('./notification.service');
 const mongoose = require('mongoose');
 
 function isEventPast(event) {
@@ -80,7 +82,7 @@ async function userHasCheckInRecord(userId, userEmail, eventId) {
 }
 
 async function assertCanSubmitFeedback({ userId, userEmail, eventId }) {
-  const event = await Event.findById(eventId).lean();
+  const event = await Event.findOne({ _id: eventId, ...EVENT_ACTIVE }).lean();
   if (!event) {
     const err = new Error('Event not found');
     err.statusCode = 404;
@@ -172,6 +174,22 @@ async function submitFeedback({ userId, userEmail, eventId, category, message, r
       rating: normalizedRating,
     },
   );
+
+  const ev = await Event.findOne({ _id: eventId, ...EVENT_ACTIVE }).select('name createdBy').lean();
+  if (ev?.createdBy) {
+    const rPart = normalizedRating != null ? ` (rating: ${normalizedRating}/5)` : '';
+    const msg = `New feedback for "${ev.name || 'your event'}"${rPart}. Category: ${safeCategory}.`;
+    await notificationService
+      .notifyUser(ev.createdBy, {
+        title: 'New event feedback',
+        message: msg,
+        type: 'info',
+        category: 'FEEDBACK',
+        eventId,
+        sendEmail: false,
+      })
+      .catch(() => {});
+  }
 
   return {
     id: saved._id.toString(),

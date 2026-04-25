@@ -2,8 +2,6 @@
  * User profile CRUD (password updates use /api/auth/change-password).
  */
 const { User } = require('../models/user.model');
-const { AccountDeletionRequest } = require('../models/accountDeletionRequest.model');
-const notificationService = require('../services/notification.service');
 const { logger } = require('../utils/logger');
 
 function sanitizeText(value, max = 250) {
@@ -170,64 +168,8 @@ const uploadProfileImage = async (req, res) => {
   }
 };
 
-const requestAccountDeletion = async (req, res) => {
-  try {
-    const userId = req.user?.id;
-    const reason = sanitizeText(req.body?.reason, 1000);
-    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
-    if (reason.length < 5) {
-      return res.status(400).json({ message: 'Please provide a reason (at least 5 characters).' });
-    }
-
-    const user = await User.findById(userId).select('name email role');
-    if (!user) return res.status(404).json({ message: 'User not found' });
-
-    const existingPending = await AccountDeletionRequest.findOne({
-      userId: user._id,
-      status: 'pending',
-      source: 'self-service',
-    }).lean();
-    if (existingPending) {
-      return res.status(409).json({ message: 'A deletion request is already pending review.' });
-    }
-
-    const reqDoc = await AccountDeletionRequest.create({
-      userId: user._id,
-      reason,
-      source: 'self-service',
-      status: 'pending',
-      requestedAt: new Date(),
-    });
-
-    await notificationService.notifyUsersByRoles(
-      ['admin', 'superAdmin'],
-      {
-        title: 'Account deletion request',
-        message: `${user.email} requested account deletion. Reason: ${reason}`,
-        type: 'warning',
-        category: 'ACCOUNT_DELETION_REQUEST',
-      },
-      { sendEmail: false },
-    );
-
-    return res.status(201).json({
-      message: 'Deletion request submitted for admin review.',
-      request: {
-        id: reqDoc._id.toString(),
-        userId: user._id.toString(),
-        reason: reqDoc.reason,
-        timestamp: reqDoc.requestedAt,
-      },
-    });
-  } catch (error) {
-    logger.error('requestAccountDeletion', { message: error.message });
-    return res.status(500).json({ message: 'Internal server error' });
-  }
-};
-
 module.exports = {
   getProfile,
   updateProfile,
   uploadProfileImage,
-  requestAccountDeletion,
 };

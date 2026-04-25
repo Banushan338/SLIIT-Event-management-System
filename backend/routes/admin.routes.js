@@ -11,16 +11,7 @@ const {
   listAuditLogs,
   listAllFeedbacks,
   deleteFeedback,
-  unlockUserAccount,
-  listDeletionRequests,
 } = require('../controllers/admin.controller');
-const {
-  softDeleteEventByAdmin,
-  listRecycledEvents,
-  restoreRecycledEvent,
-  permanentlyDeleteEvent,
-  getResourceAnalytics,
-} = require('../controllers/adminEvent.controller');
 const { validateRequest } = require('../middleware/validate.middleware');
 const { uploadProfileImage: uploadMw } = require('../middleware/upload.middleware');
 
@@ -46,8 +37,7 @@ router.patch(
     param('id').isMongoId().withMessage('Invalid user id'),
     body('name').optional().isString().trim().notEmpty(),
     body('role').optional().isString().trim(),
-    body('unlockAccount').optional().isBoolean(),
-    body('status').optional().isIn(['active', 'inactive', 'suspended', 'locked']),
+    body('status').optional().isIn(['active', 'inactive', 'suspended']),
     body('phone').optional().isString(),
     body('department').optional().isString(),
     body('registrationNumber').optional().isString(),
@@ -79,7 +69,7 @@ router.patch(
   '/users/:id/status',
   [
     param('id').isMongoId().withMessage('Invalid user id'),
-    body('status').isIn(['active', 'inactive', 'suspended', 'locked']),
+    body('status').isIn(['active', 'inactive', 'suspended']),
   ],
   validateRequest,
   changeUserStatus,
@@ -87,43 +77,9 @@ router.patch(
 
 router.delete(
   '/users/:id',
-  [
-    param('id').isMongoId().withMessage('Invalid user id'),
-    body('reason').isString().isLength({ min: 5 }),
-  ],
-  validateRequest,
-  deleteUserByAdmin,
-);
-
-router.post(
-  '/users/:id/unlock',
   [param('id').isMongoId().withMessage('Invalid user id')],
   validateRequest,
-  unlockUserAccount,
-);
-
-router.delete(
-  '/events/:id',
-  [param('id').isMongoId().withMessage('Invalid event id')],
-  validateRequest,
-  softDeleteEventByAdmin,
-);
-
-router.get('/recycle-bin/events', listRecycledEvents);
-router.get('/events/resource-analytics', getResourceAnalytics);
-
-router.post(
-  '/recycle-bin/events/:id/restore',
-  [param('id').isMongoId().withMessage('Invalid event id')],
-  validateRequest,
-  restoreRecycledEvent,
-);
-
-router.delete(
-  '/recycle-bin/events/:id',
-  [param('id').isMongoId().withMessage('Invalid event id')],
-  validateRequest,
-  permanentlyDeleteEvent,
+  deleteUserByAdmin,
 );
 
 router.post(
@@ -148,12 +104,6 @@ router.get(
   [query('limit').optional().isInt({ min: 1, max: 500 })],
   validateRequest,
   listAuditLogs,
-);
-router.get(
-  '/deletion-requests',
-  [query('limit').optional().isInt({ min: 1, max: 500 })],
-  validateRequest,
-  listDeletionRequests,
 );
 
 router.get('/feedbacks', listAllFeedbacks);
