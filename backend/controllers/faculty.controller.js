@@ -1,13 +1,15 @@
 const { Event } = require('../models/event.model');
 const { Notification } = require('../models/notification.model');
 const { logger } = require('../utils/logger');
+const { deriveLifecycleStatus } = require('../utils/eventLifecycle');
+const { EVENT_ACTIVE } = require('../utils/eventQueries');
 
 const monthKey = (d) =>
   new Date(d).toLocaleDateString(undefined, { month: 'short' });
 
 const getFacultyOverview = async (req, res) => {
   try {
-    const events = await Event.find({}).select('status createdAt').lean();
+    const events = await Event.find({ ...EVENT_ACTIVE }).select('status createdAt startTime endTime date time').lean();
 
     const stats = events.reduce(
       (acc, e) => {
@@ -24,8 +26,23 @@ const getFacultyOverview = async (req, res) => {
         approvedEvents: 0,
         rejectedEvents: 0,
         completedEvents: 0,
-      }
+      },
     );
+
+    let upcoming = 0;
+    let ongoing = 0;
+    let completed = 0;
+    for (const e of events) {
+      if (e.status !== 'approved' && e.status !== 'completed') continue;
+      const phase = deriveLifecycleStatus(e);
+      if (phase === 'upcoming') upcoming += 1;
+      else if (phase === 'ongoing') ongoing += 1;
+      else if (phase === 'completed') completed += 1;
+    }
+
+    stats.lifecycleUpcoming = upcoming;
+    stats.lifecycleOngoing = ongoing;
+    stats.lifecycleCompleted = completed;
 
     // Trend: events created over last 6 months (by createdAt month label)
     const now = new Date();
@@ -77,4 +94,3 @@ const listFacultyNotifications = async (req, res) => {
 };
 
 module.exports = { getFacultyOverview, listFacultyNotifications };
-

@@ -24,9 +24,11 @@ const generateRandomPassword = (length = 8) => {
   return password;
 };
 
-const STATUS_VALUES = ['active', 'inactive', 'suspended'];
+const STATUS_VALUES = ['active', 'inactive', 'suspended', 'locked'];
 
 function toPublicUser(u) {
+  const now = new Date();
+  const lockedByTime = u.lockUntil && new Date(u.lockUntil) > now;
   return {
     id: u._id.toString(),
     name: u.name,
@@ -40,6 +42,9 @@ function toPublicUser(u) {
     profileImage: u.profileImage || '',
     emailVerified: Boolean(u.emailVerified),
     lastLoginAt: u.lastLoginAt || null,
+    failedLoginAttempts: u.failedLoginAttempts ?? 0,
+    lockUntil: u.lockUntil || null,
+    isLocked: u.status === 'locked' || Boolean(lockedByTime),
     roleProfile: u.roleProfile || {},
     notificationPreferences: u.notificationPreferences || {},
     createdAt: u.createdAt,
@@ -149,7 +154,7 @@ const listUsers = async (req, res) => {
     const users = await User.find(filter)
       .sort({ createdAt: -1 })
       .select(
-        'name email role status department phone registrationNumber staffId address bio profileImage createdAt updatedAt lastLoginAt emailVerified roleProfile notificationPreferences',
+        'name email role status department phone registrationNumber staffId address bio profileImage createdAt updatedAt lastLoginAt emailVerified roleProfile notificationPreferences failedLoginAttempts lockUntil',
       )
       .lean();
 
@@ -275,9 +280,19 @@ const updateUserByAdmin = async (req, res) => {
       target.emailVerified = body.emailVerified;
     }
 
+    if (body.unlockAccount === true) {
+      changes.unlockAccount = { from: 'locked', to: 'active' };
+      target.failedLoginAttempts = 0;
+      target.lockUntil = null;
+      if (target.status === 'locked') target.status = 'active';
+    }
+
     if (typeof body.password === 'string' && body.password.trim().length >= 6) {
       changes.password = { from: '[redacted]', to: '[updated]' };
       target.password = await bcrypt.hash(body.password.trim(), 10);
+      target.failedLoginAttempts = 0;
+      target.lockUntil = null;
+      if (target.status === 'locked') target.status = 'active';
     }
 
     await target.save();
@@ -292,13 +307,23 @@ const updateUserByAdmin = async (req, res) => {
       });
 
       const parts = Object.keys(changes);
-      await notificationService.notifyUser(target._id, {
-        title: 'Account updated',
-        message: `An administrator updated your account (${parts.join(', ')}). If this was not expected, contact support.`,
-        type: 'info',
-        category: 'admin_update',
-        sendEmail: true,
-      });
+      if (changes.password) {
+        await notificationService.notifyUser(target._id, {
+          title: 'Password changed by administrator',
+          message: 'Your password was reset by an administrator. If you did not expect this, contact support immediately.',
+          type: 'warning',
+          category: 'ACCOUNT',
+          sendEmail: true,
+        });
+      } else {
+        await notificationService.notifyUser(target._id, {
+          title: 'Account updated',
+          message: `An administrator updated your account (${parts.join(', ')}). If this was not expected, contact support.`,
+          type: 'info',
+          category: 'admin_update',
+          sendEmail: true,
+        });
+      }
     }
 
     const u = target.toObject();
@@ -390,6 +415,10 @@ const changeUserStatus = async (req, res) => {
 
     const previousStatus = target.status || 'active';
     target.status = nextStatus;
+    if (nextStatus === 'active') {
+      target.failedLoginAttempts = 0;
+      target.lockUntil = null;
+    }
     await target.save();
 
     await AuditLog.create({
@@ -422,6 +451,11 @@ const deleteUserByAdmin = async (req, res) => {
     if (!targetId) return deny(res, 400, 'User id is required');
     if (targetId === actorId) return deny(res, 403, 'You cannot delete your own account');
 
+    const reason = String(req.body?.reason || '').trim();
+    if (reason.length < 5) {
+      return res.status(400).json({ message: 'A deletion reason of at least 5 characters is required' });
+    }
+
     const target = await User.findById(targetId);
     if (!target) return deny(res, 404, 'User not found');
     if (target.role === 'superAdmin') return deny(res, 403, 'Super admin cannot be deleted');
@@ -437,7 +471,7 @@ const deleteUserByAdmin = async (req, res) => {
       actorId: req.user.id,
       targetUserId: target._id,
       action: 'DELETE_USER',
-      changes: { deleted: true, snapshot: toPublicUser(target) },
+      changes: { deleted: true, reason, snapshot: toPublicUser(target) },
       ip: req.ip || '',
     });
 
@@ -562,6 +596,43 @@ const uploadUserImageByAdmin = async (req, res) => {
   }
 };
 
+const unlockUserAccount = async (req, res) => {
+  try {
+    const targetId = req.params?.id;
+    const actorRole = req.user?.role;
+    if (!targetId) return deny(res, 400, 'User id is required');
+    const target = await User.findById(targetId);
+    if (!target) return deny(res, 404, 'User not found');
+    if (!canManageTarget(actorRole, target.role)) {
+      return deny(res, 403, 'You are not allowed to manage this user');
+    }
+    target.failedLoginAttempts = 0;
+    target.lockUntil = null;
+    if (target.status === 'locked') target.status = 'active';
+    await target.save();
+    await AuditLog.create({
+      actorId: req.user.id,
+      targetUserId: target._id,
+      action: 'ACCOUNT_UNLOCK',
+      changes: { source: 'admin_unlock' },
+      ip: req.ip || '',
+    });
+    await notificationService.notifyUser(target._id, {
+      title: 'Account unlocked',
+      message: 'An administrator restored access to your account. You can sign in again.',
+      type: 'success',
+      category: 'ACCOUNT',
+      sendEmail: true,
+    });
+    const u = target.toObject();
+    delete u.password;
+    return res.status(200).json({ message: 'Account unlocked', user: toPublicUser(u) });
+  } catch (error) {
+    logger.error('unlockUserAccount', { message: error.message });
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
 const listAuditLogs = async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 100, 500);
@@ -607,5 +678,6 @@ module.exports = {
   listAuditLogs,
   listAllFeedbacks,
   deleteFeedback,
+  unlockUserAccount,
 };
 
