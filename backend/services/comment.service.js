@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const { Comment } = require('../models/comment.model');
 const { Event } = require('../models/event.model');
+const { EVENT_ACTIVE } = require('../utils/eventQueries');
 const { normalizeRole } = require('../utils/rbac');
 
 const ADMIN_ONLY_ROLES = ['admin', 'superAdmin', 'organizer', 'facultyCoordinator'];
@@ -45,7 +46,7 @@ async function assertCanComment({ eventId }) {
     err.statusCode = 400;
     throw err;
   }
-  const event = await Event.findById(eventId).lean();
+  const event = await Event.findOne({ _id: eventId, ...EVENT_ACTIVE }).lean();
   if (!event) {
     const err = new Error('Event not found');
     err.statusCode = 404;

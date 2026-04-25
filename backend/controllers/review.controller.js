@@ -1,4 +1,5 @@
 const { Event } = require('../models/event.model');
+const { EVENT_ACTIVE } = require('../utils/eventQueries');
 const { Review } = require('../models/review.model');
 const { Registration } = require('../models/registration.model');
 const { Attendance } = require('../models/attendance.model');
@@ -14,7 +15,7 @@ async function hasAttendance({ userId, userEmail, eventId }) {
 }
 
 async function assertReviewEligibility({ userId, userEmail, eventId }) {
-  const event = await Event.findById(eventId).lean();
+  const event = await Event.findOne({ _id: eventId, ...EVENT_ACTIVE }).lean();
   if (!event) {
     const err = new Error('Event not found');
     err.statusCode = 404;
@@ -92,7 +93,7 @@ const listReviewsByEvent = async (req, res) => {
     const page = Math.max(1, Number.parseInt(req.query?.page, 10) || 1);
     const limit = Math.min(50, Math.max(1, Number.parseInt(req.query?.limit, 10) || 20));
     const skip = (page - 1) * limit;
-    const event = await Event.findById(eventId).select('name date place').lean();
+    const event = await Event.findOne({ _id: eventId, ...EVENT_ACTIVE }).select('name date place').lean();
     if (!event) return res.status(404).json({ message: 'Event not found' });
 
     const [items, total, agg] = await Promise.all([

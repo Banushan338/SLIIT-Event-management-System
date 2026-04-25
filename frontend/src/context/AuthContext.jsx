@@ -12,17 +12,6 @@ import { api, extractErrorMessage } from '@/lib/api'
 const MAX_FAILED_ATTEMPTS = 5
 const ATTEMPT_WINDOW_MINUTES = 10
 
-const _now = Date.now()
-const _hour = 60 * 60 * 1000
-const DUMMY_FAILED_ATTEMPTS = [
-  { email: 'student1@university.ac.lk', success: false, timestamp: _now - 3 * _hour },
-  { email: 'student1@university.ac.lk', success: false, timestamp: _now - 2 * _hour },
-  { email: 'student1@university.ac.lk', success: false, timestamp: _now - 1 * _hour },
-  { email: 'faculty1@university.ac.lk', success: false, timestamp: _now - 5 * _hour },
-  { email: 'faculty1@university.ac.lk', success: false, timestamp: _now - 4 * _hour },
-  { email: 'organizer1@university.ac.lk', success: false, timestamp: _now - 6 * _hour },
-]
-
 const AuthContext = createContext(null)
 
 function normalizeRoleValue(role) {
@@ -34,6 +23,7 @@ function normalizeRoleValue(role) {
   if (up === 'ADMIN') return 'admin'
   if (up === 'ORGANIZER') return 'organizer'
   if (up === 'FACULTY_COORDINATOR' || up === 'FACULTYCOORDINATOR') return 'facultyCoordinator'
+  if (up === 'FACULTY') return 'facultyCoordinator'
   if (up === 'STAFF') return 'staff'
   if (up === 'STUDENT') return 'student'
   return raw
@@ -102,7 +92,7 @@ export function AuthProvider({ children }) {
 
   const [adminUsers, setAdminUsers] = useState([])
 
-  const [loginAttempts, setLoginAttempts] = useState(DUMMY_FAILED_ATTEMPTS)
+  const [loginAttempts, setLoginAttempts] = useState([])
   const [lockedEmails, setLockedEmails] = useState({})
   const [deactivatedEmails, setDeactivatedEmails] = useState({})
 
@@ -130,6 +120,9 @@ export function AuthProvider({ children }) {
     name: u.name,
     role: u.role,
     status: u.status,
+    isLocked: Boolean(u.isLocked),
+    failedLoginAttempts: u.failedLoginAttempts,
+    lockUntil: u.lockUntil,
     department: u.department || '',
     phone: u.phone || '',
     registrationNumber: u.registrationNumber || '',
@@ -415,8 +408,13 @@ export function AuthProvider({ children }) {
     return res.data?.user || null
   }, [refreshAdminUsers])
 
-  const deleteAdminUser = useCallback(async (id) => {
-    await api.delete(`/api/admin/users/${id}`)
+  const deleteAdminUser = useCallback(async (id, { reason } = {}) => {
+    await api.delete(`/api/admin/users/${id}`, { data: { reason } })
+    await refreshAdminUsers()
+  }, [refreshAdminUsers])
+
+  const unlockAdminUser = useCallback(async (id) => {
+    await api.post(`/api/admin/users/${id}/unlock`)
     await refreshAdminUsers()
   }, [refreshAdminUsers])
 
@@ -440,6 +438,7 @@ export function AuthProvider({ children }) {
       changeAdminUserRole,
       changeAdminUserStatus,
       deleteAdminUser,
+      unlockAdminUser,
       refreshAdminUsers,
       // security analytics (in-memory)
       loginAttempts,
@@ -464,6 +463,7 @@ export function AuthProvider({ children }) {
       changeAdminUserRole,
       changeAdminUserStatus,
       deleteAdminUser,
+      unlockAdminUser,
       refreshAdminUsers,
       loginAttempts,
       lockedEmails,

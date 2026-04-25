@@ -1,6 +1,6 @@
 import { Navigate, useLocation } from 'react-router-dom'
 
-import { useAuth, roleHomePath } from '@/context/AuthContext'
+import { roleHomePath, useAuth } from '@/context/AuthContext'
 
 export function ProtectedRoute({ role, roles, children }) {
   const { currentUser, isRestoring } = useAuth()
@@ -34,6 +34,7 @@ export function ProtectedRoute({ role, roles, children }) {
 
 export function PublicOnlyRoute({ children }) {
   const { currentUser, isRestoring } = useAuth()
+
   if (isRestoring) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-background)]">
@@ -41,8 +42,10 @@ export function PublicOnlyRoute({ children }) {
       </div>
     )
   }
+
   if (currentUser) {
     return <Navigate to={roleHomePath(currentUser.role)} replace />
   }
+
   return children
 }

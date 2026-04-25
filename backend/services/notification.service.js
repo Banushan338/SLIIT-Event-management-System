@@ -21,6 +21,9 @@ function shouldAllowCategory(prefs, category) {
   if (c === 'MODERATION') {
     return prefs.moderationNotifications !== false;
   }
+  if (c === 'SECURITY' || c === 'ACCOUNT' || c === 'ACCOUNT_SECURITY' || c === 'FEEDBACK') {
+    return true;
+  }
   if (c === 'APPROVAL' || c === 'EVENT_APPROVAL') return prefs.approvalNotifications !== false;
   // Backward compatibility for old lowercase categories
   if (String(category || '').toLowerCase() === 'approval' || String(category || '').toLowerCase() === 'event_approval') {

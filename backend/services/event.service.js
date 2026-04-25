@@ -1,6 +1,8 @@
-const { Registration } = require('../models/registration.model');
 const { User } = require('../models/user.model');
+const { Registration } = require('../models/registration.model');
 const notificationService = require('./notification.service');
+const { normalizeRole } = require('../utils/rbac');
+const { logger } = require('../utils/logger');
 
 function eventDateLabel(event) {
   const d = event?.date ? new Date(event.date) : null;
@@ -29,29 +31,39 @@ async function notifyPendingApproval(event, { resubmitted = false } = {}) {
   const message = resubmitted
     ? `Resubmitted event pending approval: ${event.name}`
     : `New event pending approval: ${event.name}`;
-  return notificationService.notifyUsersByRoles(
-    ['admin', 'superAdmin', 'facultyCoordinator'],
-    {
-      title: resubmitted ? 'Resubmitted event pending approval' : 'New event pending approval',
-      message,
-      type: 'warning',
-      category: 'EVENT',
-      roleTarget: 'ADMIN_FACULTY',
-      eventId: event._id,
-    },
-    { sendEmail: false },
-  );
+  try {
+    return await notificationService.notifyUsersByRoles(
+      ['admin', 'superAdmin', 'facultyCoordinator'],
+      {
+        title: resubmitted
+          ? 'Resubmitted event pending approval'
+          : 'New event pending approval',
+        message,
+        type: 'warning',
+        category: 'EVENT_APPROVAL',
+        roleTarget: 'ADMIN_FACULTY',
+        eventId: event._id,
+      },
+      { sendEmail: false },
+    );
+  } catch (error) {
+    logger.warn('notifyPendingApproval failed', { message: error.message });
+    return { inserted: 0 };
+  }
 }
 
-async function notifyApproved(event) {
+async function notifyApproved(event, { approvalNote = '' } = {}) {
   const publishedMessage = approvedEventMessage(event);
+  const noteLine = String(approvalNote || '').trim()
+    ? ` Note from approver: ${String(approvalNote).trim()}`
+    : '';
   const resultStudents = await notificationService.notifyUsersByRoles(
     ['student'],
     {
       title: 'New event available',
       message: publishedMessage,
       type: 'success',
-      category: 'EVENT',
+      category: 'APPROVAL',
       roleTarget: 'STUDENT',
       eventId: event._id,
     },
@@ -62,9 +74,9 @@ async function notifyApproved(event) {
     [String(event.createdBy)],
     {
       title: 'Event approved',
-      message: `${publishedMessage} It is now published to students.`,
+      message: `${publishedMessage} It is now published to students.${noteLine}`,
       type: 'success',
-      category: 'EVENT',
+      category: 'APPROVAL',
       roleTarget: 'ORGANIZER',
       eventId: event._id,
     },
@@ -76,7 +88,7 @@ async function notifyApproved(event) {
       title: 'Event approved',
       message: publishedMessage,
       type: 'info',
-      category: 'EVENT',
+      category: 'APPROVAL',
       roleTarget: 'FACULTY_COORDINATOR',
       eventId: event._id,
     },
@@ -97,7 +109,7 @@ async function notifyRejected(event, reason = '') {
     title: 'Event rejected',
     message: msg,
     type: 'warning',
-    category: 'EVENT',
+    category: 'APPROVAL',
     roleTarget: 'ORGANIZER',
     eventId: event._id,
     sendEmail: true,
@@ -123,11 +135,29 @@ async function notifyEventUpdated(event) {
 }
 
 async function ensureRoleCanApprove(approverId, approverRole, event) {
-  if (!['admin', 'superAdmin', 'facultyCoordinator'].includes(String(approverRole || ''))) {
+  const role = normalizeRole(approverRole);
+  if (!['admin', 'superAdmin', 'facultyCoordinator'].includes(role)) {
     return { ok: false, status: 403, message: 'Admin or faculty coordinator access required' };
   }
   if (String(event.createdBy) === String(approverId)) {
     return { ok: false, status: 403, message: 'You cannot approve/reject your own event' };
+  }
+  if (role === 'facultyCoordinator') {
+    const [actor, creator] = await Promise.all([
+      User.findById(approverId).select('department').lean(),
+      User.findById(event.createdBy).select('department').lean(),
+    ]);
+    const actorDept = String(actor?.department || '').trim().toLowerCase();
+    const creatorDept = String(creator?.department || '').trim().toLowerCase();
+    // Enforce same department only when both accounts have a department on file.
+    // If either is missing, approval is still allowed (avoids blocking when profiles are incomplete).
+    if (actorDept && creatorDept && actorDept !== creatorDept) {
+      return {
+        ok: false,
+        status: 403,
+        message: 'Faculty coordinators can only approve/reject events from their own department',
+      };
+    }
   }
   return { ok: true };
 }

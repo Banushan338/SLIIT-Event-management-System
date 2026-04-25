@@ -5,6 +5,13 @@ const { Registration } = require('../models/registration.model');
 const { logger } = require('../utils/logger');
 const eventService = require('../services/event.service');
 const { normalizeRole } = require('../utils/rbac');
+const {
+  combineDateAndTime,
+  deriveLifecycleStatus,
+  resolveEndFromDuration,
+  resolveDurationMinutes,
+} = require('../utils/eventLifecycle');
+const { EVENT_ACTIVE } = require('../utils/eventQueries');
 
 /** Local calendar YYYY-MM-DD for a Date (matches browser date inputs). */
 function formatLocalYmd(input) {
@@ -89,43 +96,6 @@ const requireStudentOrStaff = (req, res) => {
   return null;
 };
 
-function combineDateAndTime(dateInput, timeInput) {
-  if (!dateInput || !timeInput) return null;
-  const dateObj = dateInput instanceof Date ? dateInput : new Date(dateInput);
-  if (Number.isNaN(dateObj.getTime())) return null;
-  const hhmm = String(timeInput).trim();
-  const match = /^(\d{1,2}):(\d{2})$/.exec(hhmm);
-  if (!match) return null;
-  const next = new Date(dateObj);
-  next.setHours(Number(match[1]), Number(match[2]), 0, 0);
-  return Number.isNaN(next.getTime()) ? null : next;
-}
-
-function deriveLifecycleStatus(event, now = new Date()) {
-  const current = String(event?.status || '').toLowerCase();
-  if (current === 'cancelled') return 'cancelled';
-  const start = event?.startTime ? new Date(event.startTime) : combineDateAndTime(event?.date, event?.time);
-  const end = event?.endTime ? new Date(event.endTime) : null;
-  if (!start || Number.isNaN(start.getTime())) return current || 'upcoming';
-  if (end && Number.isNaN(end.getTime())) return current || 'upcoming';
-  if (now < start) return 'upcoming';
-  if (end && now >= start && now <= end) return 'ongoing';
-  if (!end && now >= start) return 'ongoing';
-  return 'completed';
-}
-
-function resolveDurationMinutes(start, end, fallback = 60) {
-  if (!start || !end) return fallback;
-  const minutes = Math.round((end.getTime() - start.getTime()) / 60000);
-  return Number.isFinite(minutes) && minutes > 0 ? minutes : fallback;
-}
-
-function resolveEndFromDuration(start, durationMinutes) {
-  const mins = Number.parseInt(durationMinutes, 10);
-  if (!start || !Number.isFinite(mins) || mins < 1) return null;
-  return new Date(start.getTime() + mins * 60000);
-}
-
 function getSortBucket(status) {
   const normalized = String(status || '').toLowerCase();
   if (normalized === 'upcoming') return 0;
@@ -171,6 +141,7 @@ function eventToLifecycleDto(event) {
     durationMinutes,
     location: event.location || event.place || '',
     status: computedStatus,
+    workflowStatus: event.status || 'pending',
     finishedAt: computedStatus === 'completed' ? resolvedEndTime : null,
     cancellationReason: event.cancellationReason || '',
     createdAt: event.createdAt,
@@ -217,9 +188,13 @@ const createLifecycleEvent = async (req, res) => {
       type: body?.type && EVENT_TYPES.includes(body.type) ? body.type : 'work',
       totalSeats: Number.parseInt(body?.totalSeats, 10) > 0 ? Number.parseInt(body.totalSeats, 10) : 100,
     };
-    const status = deriveLifecycleStatus({ ...base, status: 'upcoming' });
-    const created = await Event.create({ ...base, status });
-    return res.status(201).json({ event: eventToLifecycleDto(created.toObject()) });
+    // Newly created events must be reviewed by approvers before publishing.
+    const created = await Event.create({ ...base, status: 'pending' });
+    await eventService.notifyPendingApproval(created);
+    return res.status(201).json({
+      message: 'Event created successfully and pending approval',
+      event: eventToLifecycleDto(created.toObject()),
+    });
   } catch (error) {
     logger.error('Error creating lifecycle event', { message: error.message });
     return res.status(500).json({ message: 'Internal server error' });
@@ -233,27 +208,32 @@ const listLifecycleEvents = async (req, res) => {
       return res.status(403).json({ message: 'Insufficient permissions' });
     }
     const { status, organizerId, q, datePreset, startDate, endDate } = req.query || {};
-    const query = {};
-    if (organizerId) query.organizerId = organizerId;
-    if (q) query.$or = [{ title: { $regex: String(q), $options: 'i' } }, { name: { $regex: String(q), $options: 'i' } }];
+    const query = { $and: [{ ...EVENT_ACTIVE }] };
+    if (organizerId) query.$and.push({ organizerId });
+    if (q) {
+      query.$and.push({
+        $or: [{ title: { $regex: String(q), $options: 'i' } }, { name: { $regex: String(q), $options: 'i' } }],
+      });
+    }
     const now = new Date();
     if (datePreset === 'today') {
       const start = new Date(now);
       start.setHours(0, 0, 0, 0);
       const end = new Date(now);
       end.setHours(23, 59, 59, 999);
-      query.startTime = { $gte: start, $lte: end };
+      query.$and.push({ startTime: { $gte: start, $lte: end } });
     } else if (datePreset === 'week') {
       const start = new Date(now);
       start.setHours(0, 0, 0, 0);
       const end = new Date(now);
       end.setDate(now.getDate() + 7);
       end.setHours(23, 59, 59, 999);
-      query.startTime = { $gte: start, $lte: end };
+      query.$and.push({ startTime: { $gte: start, $lte: end } });
     } else if (startDate || endDate) {
-      query.startTime = {};
-      if (startDate) query.startTime.$gte = new Date(startDate);
-      if (endDate) query.startTime.$lte = new Date(endDate);
+      const st = {};
+      if (startDate) st.$gte = new Date(startDate);
+      if (endDate) st.$lte = new Date(endDate);
+      query.$and.push({ startTime: st });
     }
     const docs = await Event.find(query)
       .populate('organizerId', 'name email role')
@@ -290,6 +270,12 @@ const getLifecycleEvent = async (req, res) => {
       .populate('createdBy', 'name email role')
       .lean();
     if (!event) return res.status(404).json({ message: 'Event not found' });
+    if (event.deletedAt) {
+      const role = normalizeRole(req.user?.role);
+      if (!['admin', 'superAdmin'].includes(role)) {
+        return res.status(404).json({ message: 'Event not found' });
+      }
+    }
     return res.status(200).json({ event: eventToLifecycleDto(event) });
   } catch (error) {
     logger.error('Error getting lifecycle event', { message: error.message });
@@ -299,7 +285,7 @@ const getLifecycleEvent = async (req, res) => {
 
 const updateLifecycleEvent = async (req, res) => {
   try {
-    const event = await Event.findById(req.params.id);
+    const event = await Event.findOne({ _id: req.params.id, ...EVENT_ACTIVE });
     if (!event) return res.status(404).json({ message: 'Event not found' });
     if (!canManageEvent(req.user, event)) {
       return res.status(403).json({ message: 'You can only edit your own events' });
@@ -338,7 +324,6 @@ const updateLifecycleEvent = async (req, res) => {
     event.durationMinutes = resolveDurationMinutes(nextStart, nextEnd, Number.parseInt(body?.durationMinutes, 10) || event.durationMinutes || 60);
     event.date = nextStart;
     event.time = `${String(nextStart.getHours()).padStart(2, '0')}:${String(nextStart.getMinutes()).padStart(2, '0')}`;
-    event.status = deriveLifecycleStatus(event);
     await event.save();
     const populated = await Event.findById(event._id)
       .populate('organizerId', 'name email role')
@@ -355,7 +340,7 @@ const cancelLifecycleEvent = async (req, res) => {
   try {
     const reason = String(req.body?.reason || '').trim();
     if (!reason) return res.status(400).json({ message: 'Cancellation reason is required' });
-    const event = await Event.findById(req.params.id);
+    const event = await Event.findOne({ _id: req.params.id, ...EVENT_ACTIVE });
     if (!event) return res.status(404).json({ message: 'Event not found' });
     if (!canManageEvent(req.user, event)) {
       return res.status(403).json({ message: 'You can only cancel your own events' });
@@ -376,12 +361,15 @@ const cancelLifecycleEvent = async (req, res) => {
 
 const deleteLifecycleEvent = async (req, res) => {
   try {
-    const role = normalizeRole(req.user?.role);
-    if (!['admin', 'superAdmin'].includes(role)) {
-      return res.status(403).json({ message: 'Admin access required' });
+    const deny = requireOrganizer(req, res);
+    if (deny) return;
+    const event = await Event.findOne({ _id: req.params.id, ...EVENT_ACTIVE });
+    if (!event) return res.status(404).json({ message: 'Event not found' });
+    const ownerId = event.organizerId || event.createdBy;
+    if (String(ownerId || '') !== String(req.user?.id || '')) {
+      return res.status(403).json({ message: 'You can only delete your own events' });
     }
-    const deleted = await Event.findByIdAndDelete(req.params.id);
-    if (!deleted) return res.status(404).json({ message: 'Event not found' });
+    await Event.deleteOne({ _id: event._id });
     return res.status(200).json({ message: 'Event deleted' });
   } catch (error) {
     logger.error('Error deleting lifecycle event', { message: error.message });
@@ -480,7 +468,10 @@ const listMyEvents = async (req, res) => {
     const deny = requireOrganizer(req, res);
     if (deny) return;
 
-    const items = await Event.find({ createdBy: req.user.id })
+    const items = await Event.find({
+      createdBy: req.user.id,
+      ...EVENT_ACTIVE,
+    })
       .sort({ createdAt: -1 })
       .lean();
 
@@ -542,7 +533,10 @@ const updateMyEvent = async (req, res) => {
       return res.status(400).json({ message: 'Event id is required' });
     }
 
-    const event = await Event.findOne({ _id: eventId, createdBy: req.user.id });
+    const event = await Event.findOne({
+      _id: eventId,
+      $or: [{ createdBy: req.user.id }, { organizerId: req.user.id }],
+    });
     if (!event) {
       return res.status(404).json({ message: 'Event not found' });
     }
@@ -673,8 +667,11 @@ const checkInQr = async (req, res) => {
     if (!eventId) {
       return res.status(400).json({ message: 'Event id is required' });
     }
+    if (!mongoose.Types.ObjectId.isValid(eventId)) {
+      return res.status(400).json({ message: 'Invalid event id' });
+    }
 
-    const event = await Event.findOne({ _id: eventId, createdBy: req.user.id });
+    const event = await Event.findOne({ _id: eventId, createdBy: req.user.id, ...EVENT_ACTIVE });
     if (!event) {
       return res.status(404).json({ message: 'Event not found' });
     }
@@ -714,7 +711,10 @@ const listPendingEvents = async (req, res) => {
     const deny = requireApprover(req, res);
     if (deny) return;
 
-    const items = await Event.find({ status: 'pending' })
+    const items = await Event.find({
+      status: 'pending',
+      ...EVENT_ACTIVE,
+    })
       .sort({ createdAt: -1 })
       .populate('createdBy', 'name email role')
       .lean();
@@ -754,7 +754,9 @@ const listAllEventsForFaculty = async (req, res) => {
     const deny = requireApprover(req, res);
     if (deny) return;
 
-    const items = await Event.find({})
+    const items = await Event.find({
+      ...EVENT_ACTIVE,
+    })
       .sort({ createdAt: -1 })
       .populate('createdBy', 'name email role')
       .lean();
@@ -797,7 +799,10 @@ const listAllEventsForFaculty = async (req, res) => {
 
 const listApprovedEvents = async (req, res) => {
   try {
-    const items = await Event.find({ status: 'approved' })
+    const items = await Event.find({
+      status: 'approved',
+      ...EVENT_ACTIVE,
+    })
       .sort({ date: 1, time: 1, createdAt: -1 })
       .lean();
 
@@ -836,7 +841,7 @@ const registerForEvent = async (req, res) => {
       return res.status(400).json({ message: 'Invalid event id' });
     }
 
-    const event = await Event.findById(eventId).lean();
+    const event = await Event.findOne({ _id: eventId, ...EVENT_ACTIVE }).lean();
     if (!event || event.status !== 'approved') {
       return res.status(404).json({ message: 'Approved event not found' });
     }
@@ -901,6 +906,44 @@ const registerForEvent = async (req, res) => {
   }
 };
 
+const unregisterFromEvent = async (req, res) => {
+  try {
+    const deny = requireStudent(req, res);
+    if (deny) return;
+
+    const eventId = req.params?.id;
+    if (!eventId) {
+      return res.status(400).json({ message: 'Event id is required' });
+    }
+    if (!mongoose.Types.ObjectId.isValid(eventId)) {
+      return res.status(400).json({ message: 'Invalid event id' });
+    }
+
+    const event = await Event.findOne({ _id: eventId, ...EVENT_ACTIVE }).lean();
+    if (!event) {
+      return res.status(404).json({ message: 'Event not found' });
+    }
+
+    const removed = await Registration.findOneAndDelete({
+      eventId,
+      userId: req.user.id,
+    });
+    if (!removed) {
+      return res.status(404).json({ message: 'You are not registered for this event' });
+    }
+
+    logger.info('Student unregistered from event', {
+      eventId: String(eventId),
+      userId: req.user.id,
+    });
+
+    return res.status(200).json({ message: 'Ticket deleted successfully' });
+  } catch (error) {
+    logger.error('Error unregistering from event', { message: error.message });
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
 const approveEvent = async (req, res) => {
   try {
     const deny = requireApprover(req, res);
@@ -909,7 +952,7 @@ const approveEvent = async (req, res) => {
     const eventId = req.params?.id;
     if (!eventId) return res.status(400).json({ message: 'Event id is required' });
 
-    const event = await Event.findById(eventId);
+    const event = await Event.findOne({ _id: eventId, ...EVENT_ACTIVE });
     if (!event) return res.status(404).json({ message: 'Event not found' });
     const authz = await eventService.ensureRoleCanApprove(req.user.id, req.user.role, event);
     if (!authz.ok) return res.status(authz.status).json({ message: authz.message });
@@ -920,15 +963,19 @@ const approveEvent = async (req, res) => {
       });
     }
 
+    const approvalNote = String(
+      req.body?.approvalNote || req.body?.approvalReason || req.body?.reason || '',
+    ).trim();
     event.status = 'approved';
     event.decision = {
       decidedBy: req.user.id,
       decidedAt: new Date(),
       rejectionReason: '',
+      approvalNote,
     };
 
     await event.save();
-    await eventService.notifyApproved(event);
+    await eventService.notifyApproved(event, { approvalNote });
 
     return res.status(200).json({
       message: 'Event approved',
@@ -940,6 +987,7 @@ const approveEvent = async (req, res) => {
           decidedBy: event.decision?.decidedBy?.toString?.() || null,
           decidedAt: event.decision?.decidedAt || null,
           rejectionReason: event.decision?.rejectionReason || '',
+          approvalNote: event.decision?.approvalNote || '',
         },
         updatedAt: event.updatedAt,
       },
@@ -959,8 +1007,11 @@ const rejectEvent = async (req, res) => {
     if (!eventId) return res.status(400).json({ message: 'Event id is required' });
 
     const reason = String(req.body?.rejectionReason || req.body?.reason || '').trim();
+    if (!reason || reason.length < 3) {
+      return res.status(400).json({ message: 'A rejection reason of at least 3 characters is required' });
+    }
 
-    const event = await Event.findById(eventId);
+    const event = await Event.findOne({ _id: eventId, ...EVENT_ACTIVE });
     if (!event) return res.status(404).json({ message: 'Event not found' });
     const authz = await eventService.ensureRoleCanApprove(req.user.id, req.user.role, event);
     if (!authz.ok) return res.status(authz.status).json({ message: authz.message });
@@ -1007,7 +1058,10 @@ const getOrganizerOverview = async (req, res) => {
     if (deny) return;
 
     const organizerId = req.user.id;
-    const events = await Event.find({ createdBy: organizerId }).lean();
+    const events = await Event.find({
+      createdBy: organizerId,
+      ...EVENT_ACTIVE,
+    }).lean();
     const totalEvents = events.length;
 
     const statusCounts = events.reduce(
@@ -1138,6 +1192,7 @@ module.exports = {
   checkInQr,
   getOrganizerOverview,
   registerForEvent,
+  unregisterFromEvent,
   getStudentRegistrations,
 };
 

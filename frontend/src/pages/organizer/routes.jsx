@@ -18,7 +18,8 @@ import {
   User,
   Users,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { BrowserMultiFormatReader } from '@zxing/browser'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, Route, Routes, useNavigate, useOutletContext } from 'react-router-dom'
 import {
   Bar,
@@ -290,6 +291,8 @@ function EventDialog({ open, onOpenChange, initialEvent, onSubmit }) {
     requestReapproval: false,
   })
   const [saving, setSaving] = useState(false)
+  const [simulation, setSimulation] = useState(null)
+  const [simLoading, setSimLoading] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -312,6 +315,28 @@ function EventDialog({ open, onOpenChange, initialEvent, onSubmit }) {
       requestReapproval: false,
     })
   }, [initialEvent, open])
+
+  const runSimulation = async () => {
+    setSimLoading(true)
+    try {
+      const seats = Math.max(1, Number.parseInt(form.totalSeats, 10) || 200)
+      const res = await api.post('/api/events/preview-simulation', {
+        totalSeats: seats,
+        expectedAttendance: Math.max(1, Math.floor(seats * 0.75)),
+        durationMinutes: 120,
+      })
+      setSimulation(res.data?.simulation || null)
+      toast({
+        title: 'Simulation complete',
+        description: 'Review expected crowd flow and resource estimates.',
+        variant: 'success',
+      })
+    } catch (err) {
+      toast({ title: 'Simulation failed', description: extractErrorMessage(err), variant: 'destructive' })
+    } finally {
+      setSimLoading(false)
+    }
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -526,6 +551,40 @@ function EventDialog({ open, onOpenChange, initialEvent, onSubmit }) {
 >>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
             </div>
           </div>
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-muted)]/20 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-semibold inline-flex items-center gap-1">
+                  <Sparkles className="h-4 w-4" />
+                  Digital twin (preview)
+                </p>
+                <p className="text-xs text-[var(--color-muted-foreground)]">
+                  Estimates crowd flow, peak times, and resources from seat count and duration.
+                </p>
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={runSimulation} disabled={simLoading}>
+                {simLoading ? 'Running…' : 'Run simulation'}
+              </Button>
+            </div>
+            {simulation ? (
+              <div className="mt-3 space-y-2 text-xs text-[var(--color-muted-foreground)]">
+                <p>
+                  <span className="font-medium text-[var(--color-foreground)]">Peak: </span>
+                  {simulation.peakTimeSlot}
+                </p>
+                <p>
+                  <span className="font-medium text-[var(--color-foreground)]">Busy slots: </span>
+                  {(simulation.peakBusySlots || []).join(', ') || '—'}
+                </p>
+                {simulation.estimatedResourceUsage ? (
+                  <p>
+                    Est. staff at peak: {simulation.estimatedResourceUsage.estStaffAtPeak} • Peak concurrent:{' '}
+                    {simulation.estimatedResourceUsage.estPeakConcurrent}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
@@ -591,8 +650,16 @@ function OrganizerOverviewPage() {
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={topEvents}>
                 <CartesianGrid stroke="rgba(148,163,184,0.14)" vertical={false} />
-                <XAxis dataKey="name" tick={{ fill: '#94A3B8', fontSize: 11 }} hide={topEvents.length > 4} />
-                <YAxis tick={{ fill: '#94A3B8', fontSize: 11 }} />
+                <XAxis
+                  dataKey="name"
+                  tick={{ fill: '#94A3B8', fontSize: 11 }}
+                  interval="preserveStartEnd"
+                  label={{ value: 'Events', position: 'insideBottom', offset: -4, fill: '#94A3B8' }}
+                />
+                <YAxis
+                  tick={{ fill: '#94A3B8', fontSize: 11 }}
+                  label={{ value: 'Participants', angle: -90, position: 'insideLeft', fill: '#94A3B8' }}
+                />
                 <Tooltip />
                 <Bar dataKey="registrations" fill="#4F46E5" radius={[8, 8, 0, 0]} />
                 <Bar dataKey="scans" fill="#14B8A6" radius={[8, 8, 0, 0]} />
@@ -789,22 +856,51 @@ function OrganizerEventsPage() {
 
 function OrganizerScannerPage() {
   const { events, scanTicket } = useOutletContext()
-  const approvedEvents = events.filter((e) => e.status === 'approved')
-  const [selectedEventId, setSelectedEventId] = useState(approvedEvents[0]?.id ?? '')
+  const approvedEvents = events.filter((e) => String(e?.status || '').toLowerCase() === 'approved')
+  const selectableApprovedEvents = approvedEvents.filter((e) => /^[a-f\d]{24}$/i.test(String(e?.id || e?._id || '')))
+  const [selectedEventId, setSelectedEventId] = useState(String(approvedEvents[0]?.id || approvedEvents[0]?._id || ''))
   const [rawQr, setRawQr] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [lastResult, setLastResult] = useState(null)
+  const [cameraEnabled, setCameraEnabled] = useState(false)
+  const [cameraError, setCameraError] = useState('')
+  const videoRef = useRef(null)
+  const scannerRef = useRef(null)
+  const controlsRef = useRef(null)
+  const lastScanRef = useRef({ text: '', ts: 0 })
+  const submittingRef = useRef(false)
+
+  const stopCamera = () => {
+    if (controlsRef.current) {
+      controlsRef.current.stop()
+      controlsRef.current = null
+    }
+    if (videoRef.current?.srcObject) {
+      const stream = videoRef.current.srcObject
+      for (const track of stream.getTracks()) track.stop()
+      videoRef.current.srcObject = null
+    }
+    setCameraEnabled(false)
+  }
 
   useEffect(() => {
-    if (!selectedEventId && approvedEvents[0]?.id) setSelectedEventId(approvedEvents[0].id)
-  }, [approvedEvents, selectedEventId])
+    if (!selectedEventId && selectableApprovedEvents[0]) {
+      setSelectedEventId(String(selectableApprovedEvents[0].id || selectableApprovedEvents[0]._id || ''))
+    }
+  }, [selectableApprovedEvents, selectedEventId])
 
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    if (!selectedEventId || !rawQr.trim()) return
+  useEffect(() => {
+    submittingRef.current = submitting
+  }, [submitting])
+
+  useEffect(() => stopCamera, [])
+
+  const submitQr = async (qrPayload) => {
+    const payload = String(qrPayload || '').trim()
+    if (!selectedEventId || !/^[a-f\d]{24}$/i.test(selectedEventId) || !payload || submittingRef.current) return
     setSubmitting(true)
     try {
-      const result = await scanTicket(selectedEventId, rawQr.trim())
+      const result = await scanTicket(selectedEventId, payload)
       setLastResult(result)
       setRawQr('')
       toast({
@@ -824,17 +920,51 @@ function OrganizerScannerPage() {
     }
   }
 
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    await submitQr(rawQr)
+  }
+
+  const handleStartCamera = async () => {
+    if (!selectedEventId) {
+      setCameraError('Select an event before starting camera scan.')
+      return
+    }
+    if (!/^[a-f\d]{24}$/i.test(selectedEventId)) {
+      setCameraError('Selected event id is invalid. Refresh event data and try again.')
+      return
+    }
+    try {
+      setCameraError('')
+      if (!scannerRef.current) scannerRef.current = new BrowserMultiFormatReader()
+      controlsRef.current = await scannerRef.current.decodeFromVideoDevice(undefined, videoRef.current, (result) => {
+        if (!result) return
+        const scannedText = result.getText()?.trim()
+        if (!scannedText) return
+        const now = Date.now()
+        if (lastScanRef.current.text === scannedText && now - lastScanRef.current.ts < 2000) return
+        lastScanRef.current = { text: scannedText, ts: now }
+        setRawQr(scannedText)
+        submitQr(scannedText)
+      })
+      setCameraEnabled(true)
+    } catch (err) {
+      setCameraEnabled(false)
+      setCameraError(extractErrorMessage(err, 'Unable to access camera. Check browser permissions.'))
+    }
+  }
+
   return (
     <div className="space-y-6">
-      <PageHeader eyebrow="Organizer" title="Ticket scanner" description="Paste QR payload for manual check-in." />
+      <PageHeader eyebrow="Organizer" title="Ticket scanner" description="Scan tickets using camera or paste QR payload manually." />
       <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
         <Card glass>
           <CardHeader>
             <CardTitle>Validate ticket</CardTitle>
-            <CardDescription>Select an approved event, then paste the ticket QR string.</CardDescription>
+            <CardDescription>Select an approved event, then scan or paste the ticket QR string.</CardDescription>
           </CardHeader>
           <CardContent>
-            {approvedEvents.length ? (
+            {selectableApprovedEvents.length ? (
               <form className="space-y-4" onSubmit={handleSubmit}>
                 <div className="grid gap-2">
                   <Label>Event</Label>
@@ -843,13 +973,34 @@ function OrganizerScannerPage() {
                       <SelectValue placeholder="Choose event" />
                     </SelectTrigger>
                     <SelectContent>
-                      {approvedEvents.map((ev) => (
-                        <SelectItem key={ev.id} value={ev.id}>
+                      {selectableApprovedEvents.map((ev) => (
+                        <SelectItem key={String(ev.id || ev._id)} value={String(ev.id || ev._id)}>
                           {ev.name}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Camera scanner</Label>
+                  <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-black/80">
+                    <video ref={videoRef} className="h-[220px] w-full object-cover" muted playsInline />
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" variant="outline" onClick={handleStartCamera} disabled={cameraEnabled || submitting}>
+                      Start camera
+                    </Button>
+                    <Button type="button" variant="outline" onClick={stopCamera} disabled={!cameraEnabled}>
+                      Stop camera
+                    </Button>
+                  </div>
+                  {cameraError ? (
+                    <p className="text-xs text-rose-400">{cameraError}</p>
+                  ) : (
+                    <p className="text-xs text-[var(--color-muted-foreground)]">
+                      Allow camera permission in browser when prompted.
+                    </p>
+                  )}
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="raw-qr">QR payload</Label>
@@ -867,7 +1018,7 @@ function OrganizerScannerPage() {
                 </Button>
               </form>
             ) : (
-              <EmptyState compact icon={<ScanLine className="h-6 w-6" />} title="No approved events" description="Approve an event first." />
+              <EmptyState compact icon={<ScanLine className="h-6 w-6" />} title="No scannable approved events" description="Wait for live events to load, then try again." />
             )}
           </CardContent>
         </Card>

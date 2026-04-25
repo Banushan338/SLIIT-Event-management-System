@@ -160,8 +160,16 @@ function FacultyDashboardPage() {
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={trends}>
                 <CartesianGrid stroke="rgba(148,163,184,0.14)" />
-                <XAxis dataKey="name" tick={{ fill: '#94A3B8', fontSize: 11 }} />
-                <YAxis tick={{ fill: '#94A3B8', fontSize: 11 }} allowDecimals={false} />
+                <XAxis
+                  dataKey="name"
+                  tick={{ fill: '#94A3B8', fontSize: 11 }}
+                  label={{ value: 'Month', position: 'insideBottom', offset: -4, fill: '#94A3B8' }}
+                />
+                <YAxis
+                  tick={{ fill: '#94A3B8', fontSize: 11 }}
+                  allowDecimals={false}
+                  label={{ value: 'Events', angle: -90, position: 'insideLeft', fill: '#94A3B8' }}
+                />
                 <Tooltip />
                 <Line type="monotone" dataKey="value" stroke="#4F46E5" strokeWidth={2} dot={{ r: 3 }} />
               </LineChart>

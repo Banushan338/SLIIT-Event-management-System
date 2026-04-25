@@ -10,15 +10,20 @@ import {
   User,
   UserPlus,
   Users,
+  Unlock,
+  RotateCcw,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Navigate, Route, Routes, useNavigate, useOutletContext, useParams } from 'react-router-dom'
 import {
   Bar,
   CartesianGrid,
+  Cell,
   ComposedChart,
   Legend,
   Line,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -74,6 +79,7 @@ const navItems = [
   { to: '/admin/feedback', label: 'Event Feedback', icon: <MessageSquare className="h-4 w-4" /> },
   { to: '/admin/comments', label: 'Comment Moderation', icon: <MessageSquareWarning className="h-4 w-4" /> },
   { to: '/admin/analytics', label: 'Analytics', icon: <BarChart3 className="h-4 w-4" /> },
+  { to: '/admin/recycle-bin', label: 'Recycle bin', icon: <Trash2 className="h-4 w-4" /> },
   { to: '/admin/security', label: 'Security Logs', icon: <Shield className="h-4 w-4" /> },
   { to: '/admin/notifications', label: 'Notifications', icon: <Bell className="h-4 w-4" /> },
 ]
@@ -118,6 +124,49 @@ function useAdminData() {
 function AdminOverviewPage() {
   const { adminUsers, feedbacks, loginAttempts } = useOutletContext()
   const failed = loginAttempts.filter((a) => !a.success).length
+  const success = Math.max(0, loginAttempts.length - failed)
+
+  const roleDistribution = useMemo(() => {
+    const counts = new Map()
+    for (const user of adminUsers) {
+      const role = String(user?.role || 'unknown')
+      counts.set(role, (counts.get(role) || 0) + 1)
+    }
+    return [...counts.entries()]
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+  }, [adminUsers])
+
+  const ratingDistribution = useMemo(() => {
+    const buckets = new Map([
+      ['1', 0],
+      ['2', 0],
+      ['3', 0],
+      ['4', 0],
+      ['5', 0],
+    ])
+    for (const item of feedbacks) {
+      const raw = Number(item?.rating)
+      if (!Number.isFinite(raw)) continue
+      const key = String(Math.max(1, Math.min(5, Math.round(raw))))
+      buckets.set(key, (buckets.get(key) || 0) + 1)
+    }
+    return [...buckets.entries()].map(([rating, count]) => ({
+      rating: `${rating}★`,
+      count,
+    }))
+  }, [feedbacks])
+
+  const authBreakdown = useMemo(
+    () => [
+      { name: 'Success', value: success },
+      { name: 'Failed', value: failed },
+    ],
+    [success, failed],
+  )
+
+  const PIE_COLORS = ['#4F46E5', '#14B8A6', '#06B6D4', '#F59E0B', '#A855F7', '#64748B']
+  const AUTH_COLORS = ['#10B981', '#EF4444']
 
   return (
     <div className="space-y-6">
@@ -127,6 +176,83 @@ function AdminOverviewPage() {
         <StatCard label="Feedback entries" value={feedbacks.length} accent="teal" />
         <StatCard label="Failed logins (tracked)" value={failed} accent="amber" />
         <StatCard label="Roles" value={new Set(adminUsers.map((u) => u.role)).size} accent="cyan" hint="Distinct roles" />
+      </div>
+      <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
+        <Card glass>
+          <CardHeader>
+            <CardTitle>User roles</CardTitle>
+            <CardDescription>Current distribution of account roles.</CardDescription>
+          </CardHeader>
+          <CardContent className="h-[280px]">
+            {roleDistribution.length ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={roleDistribution}
+                    dataKey="value"
+                    nameKey="name"
+                    innerRadius={56}
+                    outerRadius={92}
+                    paddingAngle={3}
+                  >
+                    {roleDistribution.map((entry, i) => (
+                      <Cell key={`${entry.name}-${i}`} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <EmptyState compact title="No users yet" description="Role distribution appears after user data loads." />
+            )}
+          </CardContent>
+        </Card>
+        <Card glass>
+          <CardHeader>
+            <CardTitle>Login outcomes</CardTitle>
+            <CardDescription>Tracked authentication attempts.</CardDescription>
+          </CardHeader>
+          <CardContent className="h-[280px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={authBreakdown} dataKey="value" nameKey="name" outerRadius={100} paddingAngle={4}>
+                  {authBreakdown.map((entry, i) => (
+                    <Cell key={`${entry.name}-${i}`} fill={AUTH_COLORS[i % AUTH_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+        <Card glass className="lg:col-span-2 xl:col-span-1">
+          <CardHeader>
+            <CardTitle>Feedback ratings</CardTitle>
+            <CardDescription>How users rate events (1 to 5 stars).</CardDescription>
+          </CardHeader>
+          <CardContent className="h-[280px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={ratingDistribution}>
+                <CartesianGrid stroke="rgba(148,163,184,0.14)" vertical={false} />
+                <XAxis
+                  dataKey="rating"
+                  tick={{ fill: '#94A3B8', fontSize: 11 }}
+                  label={{ value: 'Rating (Stars)', position: 'insideBottom', offset: -4, fill: '#94A3B8' }}
+                />
+                <YAxis
+                  allowDecimals={false}
+                  tick={{ fill: '#94A3B8', fontSize: 11 }}
+                  label={{ value: 'Responses', angle: -90, position: 'insideLeft', fill: '#94A3B8' }}
+                />
+                <Tooltip />
+                <Bar dataKey="count" fill="#4F46E5" name="Responses" radius={[6, 6, 0, 0]} />
+                <Line type="monotone" dataKey="count" stroke="#14B8A6" name="Trend" dot={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
       </div>
     </div>
   )
@@ -141,9 +267,12 @@ function AdminUsersPage() {
     changeAdminUserRole,
     changeAdminUserStatus,
     deleteAdminUser,
+    unlockAdminUser,
     refreshAdminUsers,
   } = useOutletContext()
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleteReason, setDeleteReason] = useState('')
   const [search, setSearch] = useState('')
   const [roleFilter, setRoleFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -228,11 +357,28 @@ function AdminUsersPage() {
             const canChangeRole = allowedByRole && !(isSelf && ['admin', 'superAdmin'].includes(row.role))
             const canChangeStatus = allowedByRole
             const canDeleteUser = allowedByRole && !isSelf && row.role !== 'superAdmin'
+            const canUnlock = allowedByRole && (row.isLocked || row.status === 'locked')
             const blockedHint = isSuperAdmin
               ? 'You cannot perform this action for this account.'
               : 'Only super admin can manage admin or super admin accounts.'
             return (
               <>
+          {canUnlock ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                try {
+                  await unlockAdminUser(row.id)
+                  toast({ title: 'Unlocked', description: row.email, variant: 'success' })
+                } catch (err) {
+                  toast({ title: 'Failed', description: extractErrorMessage(err), variant: 'destructive' })
+                }
+              }}
+            >
+              <Unlock className="h-3.5 w-3.5" />
+            </Button>
+          ) : null}
           <Select
             value={row.role}
             disabled={!canChangeRole}
@@ -302,7 +448,7 @@ function AdminUsersPage() {
             size="sm"
             className="text-[var(--color-destructive)]"
             disabled={!canDeleteUser}
-            onClick={async () => {
+            onClick={() => {
               if (!canDeleteUser) {
                 toast({
                   title: 'Delete blocked',
@@ -311,12 +457,8 @@ function AdminUsersPage() {
                 })
                 return
               }
-              try {
-                await deleteAdminUser(row.id)
-                toast({ title: 'User deleted', description: row.email, variant: 'success' })
-              } catch (err) {
-                toast({ title: 'Delete blocked', description: extractErrorMessage(err), variant: 'destructive' })
-              }
+              setDeleteTarget(row)
+              setDeleteReason('')
             }}
           >
             Delete
@@ -372,6 +514,44 @@ function AdminUsersPage() {
       <Card glass className="p-5">
         <DataTable columns={columns} rows={adminUsers} emptyMessage="No users loaded." />
       </Card>
+
+      <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete user</DialogTitle>
+            <DialogDescription>
+              This is permanent. Provide a reason for the audit log (minimum 5 characters).
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={deleteReason}
+            onChange={(e) => setDeleteReason(e.target.value)}
+            placeholder="Reason for deletion"
+            required
+            className="min-h-[100px]"
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={deleteReason.trim().length < 5}
+              onClick={async () => {
+                if (!deleteTarget) return
+                try {
+                  await deleteAdminUser(deleteTarget.id, { reason: deleteReason.trim() })
+                  toast({ title: 'User deleted', description: deleteTarget.email, variant: 'success' })
+                  setDeleteTarget(null)
+                  setDeleteReason('')
+                } catch (err) {
+                  toast({ title: 'Delete failed', description: extractErrorMessage(err), variant: 'destructive' })
+                }
+              }}
+            >
+              Delete user
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
@@ -775,6 +955,8 @@ function AdminApprovalsPage() {
   const [loading, setLoading] = useState(true)
   const [rejectId, setRejectId] = useState(null)
   const [reason, setReason] = useState('')
+  const [approveId, setApproveId] = useState(null)
+  const [approvalNote, setApprovalNote] = useState('')
 
   const refresh = async () => {
     setLoading(true)
@@ -794,10 +976,14 @@ function AdminApprovalsPage() {
 
   const pending = rows.filter((e) => e.status === 'pending')
 
-  const doApprove = async (id) => {
+  const doApprove = async () => {
+    if (!approveId) return
     try {
-      await api.post(`/api/events/${id}/approve`, {})
-      toast({ title: 'Event approved', description: 'Students have been notified.', variant: 'success' })
+      const note = approvalNote.trim()
+      await api.post(`/api/events/${approveId}/approve`, note ? { approvalNote: note } : {})
+      toast({ title: 'Event approved', description: 'Students and the organizer have been notified.', variant: 'success' })
+      setApproveId(null)
+      setApprovalNote('')
       await refresh()
     } catch (err) {
       toast({ title: 'Approval failed', description: extractErrorMessage(err), variant: 'destructive' })
@@ -806,6 +992,10 @@ function AdminApprovalsPage() {
 
   const doReject = async () => {
     if (!rejectId) return
+    if (reason.trim().length < 3) {
+      toast({ title: 'Reason required', description: 'Please enter a rejection reason (at least 3 characters).', variant: 'warning' })
+      return
+    }
     try {
       await api.post(`/api/events/${rejectId}/reject`, { rejectionReason: reason.trim() })
       toast({ title: 'Event rejected', description: 'Organizer has been notified.', variant: 'success' })
@@ -859,16 +1049,34 @@ function AdminApprovalsPage() {
           </div>
         )}
       </Card>
+      <Dialog open={Boolean(approveId)} onOpenChange={(open) => !open && setApproveId(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Approve event</DialogTitle>
+            <DialogDescription>Optional message sent to the organizer with the approval.</DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={approvalNote}
+            onChange={(e) => setApprovalNote(e.target.value)}
+            placeholder="Note to organizer (optional)"
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setApproveId(null)}>Cancel</Button>
+            <Button variant="gradient" onClick={doApprove}>Approve & notify</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={Boolean(rejectId)} onOpenChange={(open) => !open && setRejectId(null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Reject event</DialogTitle>
-            <DialogDescription>Provide a reason for organizer feedback.</DialogDescription>
+            <DialogDescription>Provide a reason for the organizer and audit trail.</DialogDescription>
           </DialogHeader>
-          <Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (optional)" />
+          <Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Rejection reason (required)" required />
           <DialogFooter>
             <Button variant="outline" onClick={() => setRejectId(null)}>Cancel</Button>
-            <Button variant="destructive" onClick={doReject}>Reject</Button>
+            <Button variant="destructive" onClick={doReject} disabled={reason.trim().length < 3}>Reject</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -906,8 +1114,16 @@ function AdminAnalyticsPage() {
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={chartData}>
                 <CartesianGrid stroke="rgba(148,163,184,0.14)" />
-                <XAxis dataKey="name" tick={{ fill: '#94A3B8', fontSize: 10 }} />
-                <YAxis allowDecimals={false} tick={{ fill: '#94A3B8', fontSize: 11 }} />
+                <XAxis
+                  dataKey="name"
+                  tick={{ fill: '#94A3B8', fontSize: 10 }}
+                  label={{ value: 'Month', position: 'insideBottom', offset: -4, fill: '#94A3B8' }}
+                />
+                <YAxis
+                  allowDecimals={false}
+                  tick={{ fill: '#94A3B8', fontSize: 11 }}
+                  label={{ value: 'Feedback Count', angle: -90, position: 'insideLeft', fill: '#94A3B8' }}
+                />
                 <Tooltip />
                 <Legend />
                 <Bar dataKey="feedback" fill="#4F46E5" name="Feedback" radius={[6, 6, 0, 0]} />
@@ -984,6 +1200,87 @@ function AdminSecurityPage() {
   )
 }
 
+function AdminRecycleBinPage() {
+  const [rows, setRows] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const res = await api.get('/api/admin/recycle-bin/events')
+      setRows(res.data?.events || [])
+    } catch {
+      setRows([])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void load()
+  }, [])
+
+  const restore = async (id) => {
+    try {
+      await api.post(`/api/admin/recycle-bin/events/${id}/restore`)
+      toast({ title: 'Event restored', variant: 'success' })
+      await load()
+    } catch (err) {
+      toast({ title: 'Failed', description: extractErrorMessage(err), variant: 'destructive' })
+    }
+  }
+
+  const hardDelete = async (id) => {
+    if (!window.confirm('Permanently delete this event? This cannot be undone.')) return
+    try {
+      await api.delete(`/api/admin/recycle-bin/events/${id}`)
+      toast({ title: 'Permanently deleted', variant: 'success' })
+      await load()
+    } catch (err) {
+      toast({ title: 'Failed', description: extractErrorMessage(err), variant: 'destructive' })
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow="Admin"
+        title="Event Recycle bin"
+        description="Soft-deleted events can be restored or permanently removed."
+      />
+      {loading ? (
+        <p className="text-sm text-[var(--color-muted-foreground)]">Loading…</p>
+      ) : rows.length ? (
+        <div className="grid gap-4">
+          {rows.map((e) => (
+            <Card key={e.id} glass className="p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="font-semibold">{e.name}</p>
+                  <p className="text-xs text-[var(--color-muted-foreground)]">
+                    Status: {e.status} • Deleted: {formatDate(e.deletedAt)}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" onClick={() => void restore(e.id)}>
+                    <RotateCcw className="h-4 w-4" />
+                    Restore
+                  </Button>
+                  <Button size="sm" variant="destructive" onClick={() => void hardDelete(e.id)}>
+                    Delete forever
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <EmptyState title="Bin is empty" description="Deleted events will appear here." />
+      )}
+    </div>
+  )
+}
+
 function AdminLayout() {
   const {
     adminUsers,
@@ -992,6 +1289,7 @@ function AdminLayout() {
     changeAdminUserRole,
     changeAdminUserStatus,
     deleteAdminUser,
+    unlockAdminUser,
     refreshAdminUsers,
     loginAttempts,
     lockedEmails,
@@ -1009,6 +1307,7 @@ function AdminLayout() {
     changeAdminUserRole,
     changeAdminUserStatus,
     deleteAdminUser,
+    unlockAdminUser,
     refreshAdminUsers,
     loginAttempts,
     lockedEmails,
@@ -1045,6 +1344,7 @@ export function AdminRoutes() {
         <Route path="feedback" element={<AdminFeedbackPage />} />
         <Route path="comments" element={<AdminCommentModerationPage />} />
         <Route path="analytics" element={<AdminAnalyticsPage />} />
+        <Route path="recycle-bin" element={<AdminRecycleBinPage />} />
         <Route path="security" element={<AdminSecurityPage />} />
         <Route path="profile" element={<ProfilePage />} />
         <Route path="notifications" element={<NotificationPreferencesPage />} />

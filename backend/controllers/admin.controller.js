@@ -3,7 +3,6 @@ const { User, USER_ROLES } = require('../models/user.model');
 const { EventFeedback } = require('../models/eventFeedback.model');
 const { AuditLog } = require('../models/auditLog.model');
 const notificationService = require('../services/notification.service');
-const { sendMail } = require('../services/email.service');
 const { logger } = require('../utils/logger');
 const {
   canAssignRole,
@@ -439,15 +438,6 @@ const deleteUserByAdmin = async (req, res) => {
       action: 'DELETE_USER',
       changes: { deleted: true, snapshot: toPublicUser(target) },
       ip: req.ip || '',
-    });
-
-    sendMail({
-      to: target.email,
-      subject: 'Account deleted - SLIIT Events',
-      text: `Hello ${target.name || 'User'},\n\nYour account has been permanently deleted by an administrator.\n\nIf you think this is a mistake, please contact support.`,
-      html: `<p>Hello ${target.name || 'User'},</p><p>Your account has been <strong>permanently deleted</strong> by an administrator.</p><p>If you think this is a mistake, please contact support.</p>`,
-    }).catch((e) => {
-      logger.warn('Delete account email failed', { message: e.message, email: target.email });
     });
 
     return res.status(200).json({ message: 'User deleted' });
