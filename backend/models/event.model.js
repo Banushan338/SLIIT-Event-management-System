@@ -24,10 +24,12 @@ const resubmissionSchema = new mongoose.Schema(
 
 const eventSchema = new mongoose.Schema(
   {
+    // Legacy field used across existing pages.
     name: { type: String, required: true, trim: true },
     title: { type: String, default: '', trim: true },
     description: { type: String, default: '', trim: true },
     type: { type: String, required: true, enum: EVENT_TYPES },
+    // Legacy date/time/location fields
     date: { type: Date, required: true },
     time: { type: String, required: true, trim: true },
     place: { type: String, required: true, trim: true },
@@ -40,6 +42,7 @@ const eventSchema = new mongoose.Schema(
     images: [{ type: String, trim: true }],
     organizerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    organizerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     status: { type: String, enum: EVENT_STATUSES, default: 'pending' },
     decision: { type: decisionSchema, default: () => ({}) },
     resubmission: { type: resubmissionSchema, default: () => ({}) },

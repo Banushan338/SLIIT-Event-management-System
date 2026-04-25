@@ -1,6 +1,9 @@
 import {
   Activity,
+<<<<<<< HEAD
+=======
   ImagePlus,
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
   Bell,
   CalendarDays,
   CheckCircle2,
@@ -210,6 +213,9 @@ function useOrganizerData() {
   const saveEvent = async (payload, existingEvent) => {
     const method = existingEvent ? 'put' : 'post'
     const url = existingEvent ? `/api/events/${existingEvent.id}` : '/api/events'
+<<<<<<< HEAD
+    const res = await api[method](url, payload)
+=======
     const hasNewImages = Array.isArray(payload.imageFiles) && payload.imageFiles.length > 0
     const hasExistingImages = Array.isArray(payload.existingImages) && payload.existingImages.length > 0
 
@@ -243,6 +249,7 @@ function useOrganizerData() {
         requestReapproval: Boolean(payload.requestReapproval),
       })
     }
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
     const event = res.data?.event
     if (event) {
       setEvents((prev) =>
@@ -263,7 +270,10 @@ function useOrganizerData() {
 }
 
 function EventDialog({ open, onOpenChange, initialEvent, onSubmit }) {
+<<<<<<< HEAD
+=======
   const today = new Date().toISOString().slice(0, 10)
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
   const [form, setForm] = useState({
     name: '',
     description: '',
@@ -272,8 +282,12 @@ function EventDialog({ open, onOpenChange, initialEvent, onSubmit }) {
     time: '',
     place: '',
     totalSeats: '',
+<<<<<<< HEAD
+    thumbnailUrl: '',
+=======
     imageFiles: [],
     existingImages: [],
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
     requestReapproval: false,
   })
   const [saving, setSaving] = useState(false)
@@ -290,10 +304,14 @@ function EventDialog({ open, onOpenChange, initialEvent, onSubmit }) {
       time: initialEvent?.time ?? '',
       place: initialEvent?.place ?? '',
       totalSeats: initialEvent?.totalSeats ? String(initialEvent.totalSeats) : '',
+<<<<<<< HEAD
+      thumbnailUrl: initialEvent?.thumbnailUrl ?? '',
+=======
       imageFiles: [],
       existingImages: Array.isArray(initialEvent?.images)
         ? initialEvent.images
         : (initialEvent?.thumbnailUrl ? [initialEvent.thumbnailUrl] : []),
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
       requestReapproval: false,
     })
   }, [initialEvent, open])
@@ -322,6 +340,8 @@ function EventDialog({ open, onOpenChange, initialEvent, onSubmit }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+<<<<<<< HEAD
+=======
     if (!form.place) {
       toast({
         title: 'Venue is required',
@@ -338,14 +358,18 @@ function EventDialog({ open, onOpenChange, initialEvent, onSubmit }) {
       })
       return
     }
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
     setSaving(true)
     try {
       await onSubmit({
         ...form,
         totalSeats: Number(form.totalSeats || 0),
         date: form.date || undefined,
+<<<<<<< HEAD
+=======
         imageFiles: form.imageFiles || [],
         existingImages: form.existingImages || [],
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
       })
       onOpenChange(false)
     } finally {
@@ -383,7 +407,11 @@ function EventDialog({ open, onOpenChange, initialEvent, onSubmit }) {
             <div className="grid gap-2">
               <Label>Category</Label>
               <Select value={form.type} onValueChange={(v) => setForm((p) => ({ ...p, type: v }))}>
+<<<<<<< HEAD
+                <SelectTrigger>
+=======
                 <SelectTrigger className="h-11">
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -400,7 +428,10 @@ function EventDialog({ open, onOpenChange, initialEvent, onSubmit }) {
                 id="event-seats"
                 type="number"
                 min="1"
+<<<<<<< HEAD
+=======
                 className="h-11"
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
                 value={form.totalSeats}
                 onChange={(ev) => setForm((p) => ({ ...p, totalSeats: ev.target.value }))}
                 required
@@ -429,8 +460,11 @@ function EventDialog({ open, onOpenChange, initialEvent, onSubmit }) {
               <Input
                 id="event-date"
                 type="date"
+<<<<<<< HEAD
+=======
                 min={today}
                 className="h-11"
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
                 value={form.date}
                 onChange={(ev) => setForm((p) => ({ ...p, date: ev.target.value }))}
                 required
@@ -441,13 +475,35 @@ function EventDialog({ open, onOpenChange, initialEvent, onSubmit }) {
               <Input
                 id="event-time"
                 type="time"
+<<<<<<< HEAD
+=======
                 className="h-11"
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
                 value={form.time}
                 onChange={(ev) => setForm((p) => ({ ...p, time: ev.target.value }))}
                 required
               />
             </div>
           </div>
+<<<<<<< HEAD
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-2">
+              <Label htmlFor="event-place">Venue</Label>
+              <Input
+                id="event-place"
+                value={form.place}
+                onChange={(ev) => setForm((p) => ({ ...p, place: ev.target.value }))}
+                required
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="event-thumb">Thumbnail URL</Label>
+              <Input
+                id="event-thumb"
+                value={form.thumbnailUrl}
+                onChange={(ev) => setForm((p) => ({ ...p, thumbnailUrl: ev.target.value }))}
+              />
+=======
           <div className="grid gap-4">
             <div className="grid gap-2">
               <Label htmlFor="event-place">Venue</Label>
@@ -492,6 +548,7 @@ function EventDialog({ open, onOpenChange, initialEvent, onSubmit }) {
                   ))}
                 </div>
               ) : null}
+>>>>>>> 3f26ff8904b6d07e945fb565833ac66ff3cd1cbd
             </div>
           </div>
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-muted)]/20 p-4">

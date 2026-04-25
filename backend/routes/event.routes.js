@@ -43,12 +43,17 @@ const uploadEventImagesSafe = (req, res, next) => {
 
 // Organizer event endpoints
 router.post('/', uploadEventImagesSafe, createLifecycleEvent);
-router.post('/preview-simulation', previewEventSimulation);
 router.get('/', listLifecycleEvents);
 router.get('/overview', getOrganizerOverview);
 router.get('/mine', listMyEvents);
 router.get('/mine/feedbacks', listOrganizerFeedbacks);
 router.get('/approved', listApprovedEvents);
+router.put('/:id', updateLifecycleEvent);
+router.patch('/:id/cancel', cancelLifecycleEvent);
+router.delete('/:id', deleteLifecycleEvent);
+router.post('/:id/checkin', checkInQr);
+router.post('/:id/register', registerForEvent);
+
 
 // Student endpoints
 router.get('/student/registrations', getStudentRegistrations);
