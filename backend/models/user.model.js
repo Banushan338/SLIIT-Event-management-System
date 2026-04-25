@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 /** @typedef {'student'|'organizer'|'facultyCoordinator'|'admin'|'superAdmin'|'staff'} UserRole */
 const USER_ROLES = ['student', 'organizer', 'facultyCoordinator', 'admin', 'superAdmin', 'staff'];
 
-const USER_STATUS = ['active', 'inactive', 'suspended'];
+const USER_STATUS = ['active', 'inactive', 'suspended', 'locked'];
 
 const notificationPreferencesSchema = new mongoose.Schema(
   {
@@ -92,6 +92,17 @@ const userSchema = new mongoose.Schema(
       default: false,
     },
     lastLoginAt: {
+      type: Date,
+      default: null,
+    },
+    /** Consecutive failed password attempts (reset on success or admin unlock). */
+    failedLoginAttempts: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    /** When set and in the future, login is blocked (auto lockout). */
+    lockUntil: {
       type: Date,
       default: null,
     },

@@ -1,5 +1,6 @@
 const { Comment } = require('../models/comment.model');
 const { Event } = require('../models/event.model');
+const { EVENT_ACTIVE } = require('../utils/eventQueries');
 const commentService = require('../services/comment.service');
 const notificationService = require('../services/notification.service');
 const { normalizeRole } = require('../utils/rbac');
@@ -37,7 +38,7 @@ const postComment = async (req, res) => {
       visibleRoles,
     });
     const withUser = await Comment.findById(created._id).populate('userId', 'name email role profileImage');
-    const event = await Event.findById(eventId).select('name createdBy').lean();
+    const event = await Event.findOne({ _id: eventId, ...EVENT_ACTIVE }).select('name createdBy').lean();
     const organizerId = String(event?.createdBy || '');
     const roleRecipients = ['admin', 'superAdmin', 'facultyCoordinator'];
     const commentTargets = new Set([organizerId]);
@@ -138,7 +139,7 @@ const patchVisibility = async (req, res) => {
     const target = await Comment.findById(req.params.id);
     if (!target) return res.status(404).json({ message: 'Comment not found' });
     if (role === 'organizer') {
-      const event = await Event.findById(target.eventId).select('createdBy').lean();
+      const event = await Event.findOne({ _id: target.eventId, ...EVENT_ACTIVE }).select('createdBy').lean();
       if (!event || String(event.createdBy) !== String(req.user.id)) {
         return res.status(403).json({ message: 'Organizer can moderate only own events' });
       }
@@ -181,7 +182,7 @@ const removeComment = async (req, res) => {
     const isOwner = String(target.userId) === String(req.user.id);
     let isEventOrganizer = false;
     if (!isOwner) {
-      const ev = await Event.findById(target.eventId).select('createdBy').lean();
+      const ev = await Event.findOne({ _id: target.eventId, ...EVENT_ACTIVE }).select('createdBy').lean();
       isEventOrganizer = ev && String(ev.createdBy) === String(req.user.id);
     }
     if (!isOwner && !isEventOrganizer && !['admin', 'superAdmin'].includes(role)) {

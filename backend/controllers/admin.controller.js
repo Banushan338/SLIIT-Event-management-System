@@ -2,6 +2,7 @@ const bcrypt = require('bcrypt');
 const { User, USER_ROLES } = require('../models/user.model');
 const { EventFeedback } = require('../models/eventFeedback.model');
 const { AuditLog } = require('../models/auditLog.model');
+const { AccountDeletionRequest } = require('../models/accountDeletionRequest.model');
 const notificationService = require('../services/notification.service');
 const { sendMail } = require('../services/email.service');
 const { logger } = require('../utils/logger');
@@ -467,6 +468,14 @@ const deleteUserByAdmin = async (req, res) => {
     }
 
     await User.deleteOne({ _id: target._id });
+    await AccountDeletionRequest.create({
+      userId: target._id,
+      reason,
+      source: 'admin-delete',
+      status: 'processed',
+      requestedAt: new Date(),
+      processedAt: new Date(),
+    });
     await AuditLog.create({
       actorId: req.user.id,
       targetUserId: target._id,
@@ -667,6 +676,41 @@ const listAuditLogs = async (req, res) => {
   }
 };
 
+const listDeletionRequests = async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const rows = await AccountDeletionRequest.find({})
+      .sort({ requestedAt: -1 })
+      .limit(limit)
+      .populate('userId', 'name email role')
+      .lean();
+
+    return res.status(200).json({
+      requests: rows.map((row) => ({
+        id: row._id.toString(),
+        userId: row.userId?._id?.toString?.() || null,
+        user: row.userId
+          ? {
+              id: row.userId._id.toString(),
+              name: row.userId.name,
+              email: row.userId.email,
+              role: row.userId.role,
+            }
+          : null,
+        reason: row.reason,
+        source: row.source,
+        status: row.status,
+        timestamp: row.requestedAt,
+        requestedAt: row.requestedAt,
+        processedAt: row.processedAt || null,
+      })),
+    });
+  } catch (error) {
+    logger.error('listDeletionRequests', { message: error.message });
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
 module.exports = {
   createUserByAdmin,
   listUsers,
@@ -679,5 +723,6 @@ module.exports = {
   listAllFeedbacks,
   deleteFeedback,
   unlockUserAccount,
+  listDeletionRequests,
 };
 

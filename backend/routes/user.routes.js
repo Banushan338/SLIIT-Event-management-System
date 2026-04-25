@@ -60,4 +60,12 @@ router.put(
   userController.uploadProfileImage,
 );
 
+router.post(
+  '/deletion-request',
+  authenticate,
+  body('reason').isString().trim().isLength({ min: 5, max: 1000 }),
+  validateRequest,
+  userController.requestAccountDeletion,
+);
+
 module.exports = router;

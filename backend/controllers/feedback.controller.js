@@ -3,6 +3,7 @@
  */
 const { Feedback } = require('../models/feedback.model');
 const { Event } = require('../models/event.model');
+const { EVENT_ACTIVE } = require('../utils/eventQueries');
 const feedbackService = require('../services/feedback.service');
 const { normalizeRole } = require('../utils/rbac');
 const { logger } = require('../utils/logger');
@@ -49,12 +50,12 @@ const getByEvent = async (req, res) => {
     const page = Math.max(1, Number.parseInt(req.query?.page, 10) || 1);
     const limit = Math.min(50, Math.max(1, Number.parseInt(req.query?.limit, 10) || 20));
     const skip = (page - 1) * limit;
-    const event = await Event.findById(eventId).select('name date place').lean();
+    const event = await Event.findOne({ _id: eventId, ...EVENT_ACTIVE }).select('name date place').lean();
     if (!event) {
       return res.status(404).json({ message: 'Event not found' });
     }
     if (role === 'organizer') {
-      const own = await Event.findOne({ _id: eventId, createdBy: req.user.id }).select('_id').lean();
+      const own = await Event.findOne({ _id: eventId, createdBy: req.user.id, ...EVENT_ACTIVE }).select('_id').lean();
       if (!own) {
         return res.status(403).json({ message: 'Organizer can view feedback only for own events' });
       }
@@ -168,7 +169,7 @@ const getAnalytics = async (req, res) => {
     let eventFilter = null;
     if (eventId) {
       const summary = await feedbackService.getEventFeedbackSummary(eventId);
-      const ev = await Event.findById(eventId).select('name').lean();
+      const ev = await Event.findOne({ _id: eventId, ...EVENT_ACTIVE }).select('name').lean();
       eventFilter = {
         eventId,
         name: ev?.name,

@@ -15,8 +15,14 @@ const {
   checkInQr,
   getOrganizerOverview,
   registerForEvent,
+  unregisterFromEvent,
   getStudentRegistrations,
 } = require('../controllers/event.controller');
+const {
+  previewEventSimulation,
+  getResourceInsights,
+  getEventStoryPdf,
+} = require('../controllers/adminEvent.controller');
 const { uploadEventImages } = require('../middleware/upload.middleware');
 const {
   getStudentPastFeedbackItems,
@@ -37,26 +43,30 @@ const uploadEventImagesSafe = (req, res, next) => {
 
 // Organizer event endpoints
 router.post('/', uploadEventImagesSafe, createLifecycleEvent);
+router.post('/preview-simulation', previewEventSimulation);
 router.get('/', listLifecycleEvents);
 router.get('/overview', getOrganizerOverview);
 router.get('/mine', listMyEvents);
 router.get('/mine/feedbacks', listOrganizerFeedbacks);
 router.get('/approved', listApprovedEvents);
+
+// Student endpoints
+router.get('/student/registrations', getStudentRegistrations);
+router.get('/student/past-feedback', getStudentPastFeedbackItems);
+
+// Faculty coordinator endpoints
+router.get('/pending', listPendingEvents);
+router.get('/faculty/all', listAllEventsForFaculty);
+router.get('/:id/story-pdf', getEventStoryPdf);
+router.get('/:id/resource-insights', getResourceInsights);
 router.get('/:id', getLifecycleEvent);
 router.put('/:id', uploadEventImagesSafe, updateLifecycleEvent);
 router.patch('/:id/cancel', cancelLifecycleEvent);
 router.delete('/:id', deleteLifecycleEvent);
 router.post('/:id/checkin', checkInQr);
 router.post('/:id/register', registerForEvent);
-
-// Student endpoints
-router.get('/student/registrations', getStudentRegistrations);
-router.get('/student/past-feedback', getStudentPastFeedbackItems);
+router.delete('/:id/register', unregisterFromEvent);
 router.post('/:id/feedback', submitFeedback);
-
-// Faculty coordinator endpoints
-router.get('/pending', listPendingEvents);
-router.get('/faculty/all', listAllEventsForFaculty);
 router.post('/:id/approve', approveEvent);
 router.post('/:id/reject', rejectEvent);
 
