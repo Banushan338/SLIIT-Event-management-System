@@ -46,22 +46,15 @@ function redirectWithOAuthError(res, message) {
  */
 const oauthStart = (req, res) => {
   const { provider } = req.params;
-
-  if (provider === 'microsoft') {
-    return redirectWithOAuthError(res, 'Microsoft sign-in is not configured yet.');
-  }
-
-  if (provider !== 'google') {
-    return res.status(404).json({ message: 'Unknown OAuth provider' });
-  }
+  if (provider !== 'google') return res.status(404).json({ message: 'Unknown OAuth provider' });
 
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const providerName = 'Google';
   if (!clientId || !clientSecret) {
-    logger.warn('Google OAuth start: missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET');
+    logger.warn(`${providerName} OAuth start: missing client credentials`);
     return res.status(503).json({
-      message:
-        'Google sign-in is not configured on the server. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.',
+      message: `${providerName} sign-in is not configured on the server.`,
     });
   }
 
@@ -89,21 +82,15 @@ const oauthStart = (req, res) => {
  */
 const oauthCallback = async (req, res) => {
   const { provider } = req.params;
-
-  if (provider === 'microsoft') {
-    return redirectWithOAuthError(res, 'Microsoft sign-in is not configured yet.');
-  }
-
-  if (provider !== 'google') {
-    return res.status(404).json({ message: 'Unknown OAuth provider' });
-  }
+  if (provider !== 'google') return res.status(404).json({ message: 'Unknown OAuth provider' });
+  const providerName = 'Google';
 
   if (req.query.error) {
     const msg =
       typeof req.query.error_description === 'string'
         ? req.query.error_description
         : String(req.query.error || 'OAuth error');
-    logger.warn('Google OAuth callback error', { error: req.query.error });
+    logger.warn(`${providerName} OAuth callback error`, { error: req.query.error });
     return redirectWithOAuthError(res, msg);
   }
 
@@ -121,7 +108,7 @@ const oauthCallback = async (req, res) => {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
-    return redirectWithOAuthError(res, 'Google sign-in is not configured on the server.');
+    return redirectWithOAuthError(res, `${providerName} sign-in is not configured on the server.`);
   }
 
   const redirectUri = googleRedirectUri();
@@ -141,24 +128,24 @@ const oauthCallback = async (req, res) => {
 
     const tokenJson = await tokenRes.json();
     if (!tokenRes.ok) {
-      logger.error('Google token exchange failed', {
+      logger.error(`${providerName} token exchange failed`, {
         status: tokenRes.status,
         error: tokenJson?.error,
       });
-      return redirectWithOAuthError(res, 'Could not complete Google sign-in. Please try again.');
+      return redirectWithOAuthError(res, `Could not complete ${providerName} sign-in. Please try again.`);
     }
 
-    const googleAccess = tokenJson.access_token;
-    if (!googleAccess) {
-      return redirectWithOAuthError(res, 'Could not complete Google sign-in.');
+    const oauthAccess = tokenJson.access_token;
+    if (!oauthAccess) {
+      return redirectWithOAuthError(res, `Could not complete ${providerName} sign-in.`);
     }
 
     const profileRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-      headers: { Authorization: `Bearer ${googleAccess}` },
+      headers: { Authorization: `Bearer ${oauthAccess}` },
     });
     const profile = await profileRes.json();
     if (!profileRes.ok || !profile.email) {
-      logger.error('Google userinfo failed', { status: profileRes.status });
+      logger.error(`${providerName} userinfo failed`, { status: profileRes.status });
       return redirectWithOAuthError(res, 'Could not read your Google profile.');
     }
 
@@ -199,7 +186,7 @@ const oauthCallback = async (req, res) => {
     }).toString();
     return res.redirect(302, `${base}/oauth/callback#${hash}`);
   } catch (error) {
-    logger.error('Google OAuth callback exception', { message: error.message });
+    logger.error(`${providerName} OAuth callback exception`, { message: error.message });
     return redirectWithOAuthError(res, 'Sign-in failed. Please try again.');
   }
 };
