@@ -1,0 +1,142 @@
+const { Event } = require('../models/event.model');
+const { Notification } = require('../models/notification.model');
+const { logger } = require('../utils/logger');
+
+const monthLabel = (d) =>
+  new Date(d).toLocaleDateString(undefined, { month: 'short' });
+
+const getFacultyOverview = async (req, res) => {
+  try {
+    const events = await Event.find({}).select('status date').lean();
+
+    const stats = events.reduce(
+      (acc, e) => {
+        if (e.status === 'pending') acc.pendingApprovals += 1;
+        if (e.status === 'approved') acc.approvedEvents += 1;
+        if (e.status === 'rejected') acc.rejectedEvents += 1;
+        if (e.status === 'completed') acc.completedEvents += 1;
+        return acc;
+      },
+      {
+        totalEvents: 0,
+        pendingApprovals: 0,
+        approvedEvents: 0,
+        rejectedEvents: 0,
+        completedEvents: 0,
+      }
+    );
+
+    // Per dashboard requirement: Total Events = Pending + Approved + Rejected
+    stats.totalEvents =
+      (stats.pendingApprovals || 0) +
+      (stats.approvedEvents || 0) +
+      (stats.rejectedEvents || 0);
+
+    // Trend: by month, split by status; monthTotal = pending+approved+rejected.
+    // IMPORTANT: Use the same underlying dataset as the top stats (all events),
+    // so the sum across the trend series equals the stats values.
+    const monthAgg = await Event.aggregate([
+      {
+        $match: {
+          status: { $in: ['pending', 'approved', 'rejected'] },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            y: { $year: '$date' },
+            m: { $month: '$date' },
+            status: '$status',
+          },
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { '_id.y': 1, '_id.m': 1 } },
+    ]);
+
+    // Build continuous month list from earliest->latest month in aggregation.
+    let min = null; // Date
+    let max = null; // Date
+    for (const row of monthAgg || []) {
+      const y = row?._id?.y;
+      const m1 = row?._id?.m;
+      if (!y || !m1) continue;
+      const d = new Date(y, m1 - 1, 1);
+      if (!min || d < min) min = d;
+      if (!max || d > max) max = d;
+    }
+
+    const months = [];
+    const indexByKey = new Map();
+    if (min && max) {
+      const cursor = new Date(min);
+      while (cursor <= max) {
+        const y = cursor.getFullYear();
+        const m1 = cursor.getMonth() + 1;
+        const key = `${y}-${String(m1).padStart(2, '0')}`;
+        indexByKey.set(key, months.length);
+        months.push({
+          key,
+          name: monthLabel(cursor),
+          pendingApprovals: 0,
+          approvedEvents: 0,
+          rejectedEvents: 0,
+          totalEvents: 0,
+        });
+        cursor.setMonth(cursor.getMonth() + 1);
+      }
+    }
+
+    for (const row of monthAgg || []) {
+      const y = row?._id?.y;
+      const m1 = row?._id?.m;
+      const status = row?._id?.status;
+      const count = row?.count || 0;
+      if (!y || !m1 || !status) continue;
+
+      const k = `${y}-${String(m1).padStart(2, '0')}`;
+      const idx = indexByKey.get(k);
+      if (idx === undefined) continue;
+
+      if (status === 'pending') months[idx].pendingApprovals += count;
+      else if (status === 'approved') months[idx].approvedEvents += count;
+      else if (status === 'rejected') months[idx].rejectedEvents += count;
+    }
+
+    for (const m of months) {
+      m.totalEvents =
+        (m.pendingApprovals || 0) +
+        (m.approvedEvents || 0) +
+        (m.rejectedEvents || 0);
+    }
+
+    return res.status(200).json({ stats, trends: months });
+  } catch (error) {
+    logger.error('Error building faculty overview', { message: error.message });
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+const listFacultyNotifications = async (req, res) => {
+  try {
+    const items = await Notification.find({ targetRole: 'facultyCoordinator' })
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .lean();
+
+    return res.status(200).json({
+      notifications: items.map((n) => ({
+        id: n._id.toString(),
+        title: n.title,
+        message: n.message,
+        read: Boolean(n.read),
+        createdAt: n.createdAt,
+      })),
+    });
+  } catch (error) {
+    logger.error('Error listing faculty notifications', { message: error.message });
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+module.exports = { getFacultyOverview, listFacultyNotifications };
